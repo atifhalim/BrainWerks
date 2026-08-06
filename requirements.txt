@@ -1,0 +1,10 @@
+# Runtime dependencies for BrainWerks.
+# For the full/pinned set, prefer: pip install -e ".[datasets,dev]"
+braindecode>=0.8
+torch>=2.0
+mne>=1.5
+skorch>=0.15
+scikit-learn>=1.3
+numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7
