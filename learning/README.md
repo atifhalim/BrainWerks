@@ -2,6 +2,28 @@
 
 Beginner-friendly resources for understanding this project.
 
+## Interactive notebook — Explore the Data (`notebooks/Tutorial1_Explore_Data.ipynb`)
+
+A hands-on Google Colab notebook for Tutorial #1: the student **picks a data
+source from a dropdown** and instantly sees its **raw brain data as a table**
+(plus a quick plot) — the live version of the deck's "raw data" slide.
+
+**▶ Open it in Google Colab:**
+<https://colab.research.google.com/github/atifhalim/BrainWerks/blob/main/learning/notebooks/Tutorial1_Explore_Data.ipynb>
+
+*(The Colab link works once this is merged into `main`. Nothing to install — it
+runs in the browser; a free Google account is all that's needed.)*
+
+Data sources included:
+
+- **Synthetic** — the random data from Tutorial #1 (no real pattern, by design).
+- **Real motor imagery** — genuine EEG while a person imagined moving a hand (PhysioNet).
+- **Real alpha waves** — genuine EEG with eyes closed, showing the alpha rhythm (PhysioNet).
+- **Real sleep EEG** — genuine sleep recording with big slow waves (PhysioNet Sleep-EDF).
+
+The real samples are downloaded on demand by [MNE-Python](https://mne.tools/)'s
+built-in dataset fetchers, so no data files are stored in the repo.
+
 ## Brain Waves & AI — Tutorial 1 (`Brain-Waves-and-AI-Tutorial-1.pptx`)
 
 A 25-slide presentation that teaches braindecode's first tutorial
