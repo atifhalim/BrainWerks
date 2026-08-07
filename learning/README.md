@@ -24,6 +24,24 @@ Data sources included:
 The real samples are downloaded on demand by [MNE-Python](https://mne.tools/)'s
 built-in dataset fetchers, so no data files are stored in the repo.
 
+## Interactive notebook — Train a Model (`notebooks/Tutorial1_Train_Model.ipynb`)
+
+The sequel: the student **picks a task, picks an AI model, sets the training
+options (learning rate, passes, batch size), clicks Train, and sees the test
+accuracy** — the full braindecode pipeline, made interactive.
+
+**▶ Open it in Google Colab:**
+<https://colab.research.google.com/github/atifhalim/BrainWerks/blob/main/learning/notebooks/Tutorial1_Train_Model.ipynb>
+
+Tasks the student can train on:
+
+- **Synthetic (random noise)** — stays near chance no matter what, showing "no pattern → no learning."
+- **Eyes open vs closed (alpha)** — real EEG; usually learns easily (well above 50%).
+- **Imagine left vs right hand** — real motor imagery; harder and noisier, a genuine BCI task.
+
+Models: **ShallowFBCSPNet**, **Deep4Net**, and **EEGNet**. Training runs on a
+free Colab GPU if you enable one (`Runtime ▸ Change runtime type ▸ GPU`).
+
 ## Brain Waves & AI — Tutorial 1 (`Brain-Waves-and-AI-Tutorial-1.pptx`)
 
 A 25-slide presentation that teaches braindecode's first tutorial
