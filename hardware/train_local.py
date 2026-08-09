@@ -67,10 +67,15 @@ def main():
     ap.add_argument("--epochs", type=int, default=25)
     ap.add_argument("--lr", type=float, default=6.25e-4)
     ap.add_argument("--batch", type=int, default=16)
+    ap.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto",
+                    help="auto uses GPU if free; cpu is instant for small models")
     args = ap.parse_args()
 
-    set_random_seeds(20240205, cuda=torch.cuda.is_available())
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if args.device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device = args.device
+    set_random_seeds(20240205, cuda=(device == "cuda"))
     print(f"Training on: {device.upper()}  (PyTorch {torch.__version__})")
 
     if args.source == "npz":
