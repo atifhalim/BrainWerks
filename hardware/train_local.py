@@ -19,8 +19,15 @@ import argparse
 import numpy as np
 import mne
 import torch
-from braindecode.models import ShallowFBCSPNet, Deep4Net, EEGNet
-from braindecode import EEGClassifier
+from braindecode.models import ShallowFBCSPNet, Deep4Net
+try:                                         # braindecode >= 1.0
+    from braindecode.models import EEGNet
+except ImportError:                          # braindecode < 1.0 called it EEGNetv4
+    from braindecode.models import EEGNetv4 as EEGNet
+try:
+    from braindecode import EEGClassifier
+except ImportError:
+    from braindecode.classifier import EEGClassifier
 from braindecode.util import set_random_seeds
 from skorch.dataset import ValidSplit
 from sklearn.model_selection import train_test_split
@@ -80,9 +87,15 @@ def main():
     Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25,
                                           random_state=1, stratify=y)
     Model = MODELS[args.model]
-    mod = (Model(n_chans=C, n_outputs=n_cls, n_times=T, final_conv_length="auto")
-           if args.model in ("shallow", "deep")
-           else Model(n_chans=C, n_outputs=n_cls, n_times=T))
+    extra = {"final_conv_length": "auto"} if args.model in ("shallow", "deep") else {}
+
+    def make_model(**kw):
+        try:                                     # braindecode >= 0.8 naming
+            return Model(n_chans=C, n_outputs=n_cls, n_times=T, **kw)
+        except TypeError:                        # older braindecode naming
+            return Model(in_chans=C, n_classes=n_cls, input_window_samples=T, **kw)
+
+    mod = make_model(**extra)
     clf = EEGClassifier(mod, criterion=torch.nn.CrossEntropyLoss,
                         optimizer=torch.optim.Adam, optimizer__lr=args.lr,
                         batch_size=args.batch, max_epochs=args.epochs,
