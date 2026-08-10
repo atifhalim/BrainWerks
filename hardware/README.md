@@ -3,6 +3,9 @@
 Scripts for recording EEG from the PiEEG **IronBCI-32** (32-channel) and training
 braindecode models on a Jetson (or any Linux computer).
 
+**On a Jetson?** See **[JETSON.md](JETSON.md)** for the exact copy-paste recipe:
+container setup, the "bake your own image" step, and a one-command daily startup.
+
 | File | What it does | Needs |
 |------|--------------|-------|
 | `train_local.py` | Train a braindecode model locally (CPU or GPU). Works today on public motor-imagery data (`--source eegbci`) or your own recordings (`--source npz file.npz`). | braindecode, mne, scikit-learn |
