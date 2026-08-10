@@ -62,18 +62,19 @@ python3 -c "import torch; print(torch.__version__, 'CUDA:', torch.cuda.is_availa
 Still inside the container:
 
 ```bash
-CUDA_VISIBLE_DEVICES="" python3 train_local.py --source eegbci --model shallow --epochs 25
+python3 train_local.py --source eegbci --model shallow --epochs 25
 ```
 
 You should see it download a small sample once, then finish with something like
 `TEST ACCURACY = 66.7%   (chance = 50%)`. Anything above chance means the model
 learned. 🎉
 
-**Why `CUDA_VISIBLE_DEVICES=""` (i.e. run on CPU)?** The Xavier NX shares one
-8GB pool between CPU and GPU. These EEG models are tiny, so the CPU finishes
-them almost instantly, and forcing CPU avoids the `CUDA out of memory` error
-that happens when the desktop/browser is already using the shared RAM. Save the
-GPU for genuinely large models.
+**CPU or GPU?** By default (`--device auto`) it uses the **GPU when the Xavier
+NX's shared 8GB has room, and falls back to the CPU automatically if the GPU runs
+out** — so you get GPU speed whenever it fits, and it never just crashes with
+`CUDA out of memory`. Force one if you want: `--device cuda` or `--device cpu`.
+For these tiny models the CPU is already near-instant; the GPU pays off as models
+and datasets grow.
 
 ---
 
@@ -104,10 +105,10 @@ sudo docker run --runtime nvidia -it --rm --network host --dns 8.8.8.8 \
     -v ~/bci:/work -w /work brainwerks-jetson:latest
 ```
 
-Then train:
+Then train (uses the GPU when it fits, CPU otherwise):
 
 ```bash
-CUDA_VISIBLE_DEVICES="" python3 train_local.py --source eegbci --model shallow --epochs 25
+python3 train_local.py --source eegbci --model shallow --epochs 25
 ```
 
 Because `~/bci` is mapped to `/work`, your scripts and recordings live on the
@@ -115,7 +116,24 @@ Jetson and survive even with `--rm`. Keep everything in `~/bci`.
 
 ---
 
-## 5. Later: train on your own headset recordings
+## 5. Optional: the point-and-click web app
+
+Prefer clicking to typing? There's a bare-bones website that does the whole
+Tutorial #1 loop (pick a dataset → view the data → change parameters → pick a
+model → train → read the accuracy), running on the Jetson. It needs nothing
+extra installed. Inside the container:
+
+```bash
+cd hardware/webapp   # (clone or copy the repo into ~/bci first)
+python3 server.py
+```
+
+Then open `http://localhost:8000` on the Jetson, or `http://<jetson-ip>:8000`
+from your laptop on the same Wi-Fi (`hostname -I` shows the Jetson's IP; the
+`--network host` flag is what makes the port reachable). See
+[`webapp/README.md`](webapp/README.md).
+
+## 6. Later: train on your own headset recordings
 
 Once the IronBCI-32 arrives, record a labeled session (on battery!) and train on
 it — see `README.md` for `ironbci32_stream.py`. In short:
@@ -134,5 +152,5 @@ python3 train_local.py --source npz session1.npz --model eegnet --epochs 40
 |---|---|
 | `wget` hangs / "nothing happens" when running the script | DNS is down. Run `echo "nameserver 8.8.8.8" \| sudo tee /etc/resolv.conf`, then re-download with the temp-file trick in step 0. |
 | `h5py` / `libhdf5.so` build error during `pip install` | You skipped the HDF5 lines. Run the two `apt-get` + `export HDF5_DIR=…` lines in step 1, then re-run `pip install`. |
-| `CUDA error: out of memory` / `NvMapMemAlloc error 12` | Shared RAM is full. Run with `CUDA_VISIBLE_DEVICES=""` (CPU) as shown, or close the browser/desktop apps. |
+| `CUDA error: out of memory` / `NvMapMemAlloc error 12` | With `--device auto` (the default) training now falls back to the CPU automatically, so you shouldn't see this. If you forced `--device cuda`, either drop back to `auto`/`cpu` or close the browser/desktop apps to free the shared RAM. |
 | `ModuleNotFoundError: No module named 'mne'` | An earlier `h5py` failure aborted the whole install. Apply the HDF5 fix, then re-run `pip install braindecode mne scikit-learn`. |
