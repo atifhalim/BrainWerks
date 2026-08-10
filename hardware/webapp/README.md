@@ -31,17 +31,23 @@ Change the port with `PORT=9000 python3 server.py` if 8000 is taken.
 
 ## What each dataset gives you
 
-| Dataset | Real data? | Download? | You can change |
-|---|---|---|---|
-| **Synthetic (random noise)** | No — random noise with **random labels** | None | clips, channels, samples, classes |
-| **Motor imagery (eegbci)** | Yes — imagined left vs. right hand | Once, ~small | clip length (seconds) |
+The **three datasets** and their editable knobs mirror the Tutorial #1 Colab
+notebook exactly — you can only change what the experimenters left open:
+
+| Dataset | Real data? | Download? | You can change | Fixed |
+|---|---|---|---|---|
+| **Synthetic (random noise)** | No — random noise with **random labels** | None | trials, channels, time (samples), classes | — (250 Hz, 4 ms/sample) |
+| **Real: eyes open vs closed (alpha)** | Yes — occipital alpha rhythm | Once, ~small | channels to use, clip length (s) | 2 classes, 160 Hz |
+| **Real: imagine LEFT vs RIGHT hand** | Yes — motor imagery | Once, ~small | channels to use, clip length (s) | 2 classes, 160 Hz |
 
 Start with **Synthetic** to confirm the whole loop in seconds (no network). It is
 deliberately **random with no pattern**, exactly like the Tutorial #1 slides and
 Colab notebook — so accuracy should stay **near chance** (100 ÷ classes %). That
-is the point: *no pattern, no learning*. Then switch to **Motor imagery** for
-real EEG that a model can actually learn (the first run downloads a sample, which
-can take a minute).
+is the point: *no pattern, no learning*. It runs at **250 Hz (4 ms per sample)**,
+matching the deck. Then switch to a **real** dataset that a model can actually
+learn (the first run downloads a small sample, which can take a minute):
+**eyes open vs closed** is the easy win (alpha jumps well above 50%); **imagine
+left vs right hand** is the hard one.
 
 > The command-line `train_local.py --source synthetic` uses a *learnable*
 > synthetic (a per-class rhythm) instead — it exists to prove the training

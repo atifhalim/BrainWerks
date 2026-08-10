@@ -52,9 +52,9 @@ def source_synthetic(classes, per_class, channels, n_times, seed):
     """Reuse train_local.load_synthetic so both boxes share one data recipe."""
     import train_local as tl
     n = len(classes) * per_class
-    X, y, _, sfreq = tl.load_synthetic(trials=n, channels=channels,
-                                       n_times=n_times, classes=len(classes),
-                                       seed=seed)
+    X, y, _, sfreq, _ = tl.load_synthetic(trials=n, channels=channels,
+                                          n_times=n_times, classes=len(classes),
+                                          seed=seed)
     meta = {"sfreq": float(sfreq),
             "ch_names": [f"ch{i+1}" for i in range(channels)],
             "classes": list(classes)}

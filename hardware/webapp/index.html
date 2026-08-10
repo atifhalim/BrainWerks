@@ -72,6 +72,7 @@
     <div class="step">Step 2 · Adjust what you're allowed to</div>
     <p class="blurb">Only the settings the dataset's creators left open show up here.</p>
     <div class="grid" id="params"></div>
+    <p class="muted" id="ds-fixed" style="margin-top:8px"></p>
     <button id="view">👁  View the data</button>
     <div id="preview" class="hidden" style="margin-top:14px">
       <div id="shape"></div>
@@ -158,6 +159,7 @@ function renderParams() {
              min="${p.min}" max="${p.max}" step="${p.step}">`;
     $('params').appendChild(wrap);
   }
+  $('ds-fixed').textContent = ds.fixed || '';
   $('preview').classList.add('hidden');
 }
 

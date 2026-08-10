@@ -35,40 +35,63 @@ PORT = int(os.environ.get("PORT", "8000"))
 
 # Which knobs each dataset exposes. The page renders controls from this, so the
 # UI always matches what the dataset actually lets you change (like the Colab).
+# The three Tutorial #1 datasets, and — exactly like the Colab — only the knobs
+# each dataset's experimenters left open. Synthetic lets you set its whole shape;
+# the two real datasets let you pick how many channels and the clip length, while
+# their classes and sampling rate are fixed by the recording.
 DATASETS = {
     "synthetic": {
-        "label": "Synthetic (random noise) — instant, no download",
+        "label": "Synthetic (random noise)",
         "blurb": "Random noise with RANDOM class labels — there is NO pattern, "
                  "so accuracy should stay near chance (100 ÷ classes %). That is "
-                 "the whole point of Tutorial #1: no pattern, no learning. Every "
-                 "knob below is yours to set.",
+                 "the whole point of Tutorial #1: no pattern, no learning. You "
+                 "set its whole shape below; the slides used 100 trials, 3 "
+                 "channels, 1024 samples, 4 classes, at 250 Hz (4 ms per sample).",
         "params": [
-            {"name": "trials",   "label": "Clips (trials)",     "type": "int",
-             "default": 120, "min": 40, "max": 400, "step": 4},
-            {"name": "channels", "label": "Channels",           "type": "int",
-             "default": 3,   "min": 1,  "max": 16,  "step": 1},
-            {"name": "n_times",  "label": "Samples per clip",   "type": "int",
-             "default": 1024, "min": 128, "max": 2048, "step": 64},
-            {"name": "classes",  "label": "Classes",            "type": "int",
-             "default": 4,   "min": 2,  "max": 6,   "step": 1},
+            {"name": "trials",   "label": "Trials (clips)",       "type": "int",
+             "default": 100, "min": 60,  "max": 300,  "step": 10},
+            {"name": "channels", "label": "Channels",             "type": "int",
+             "default": 3,   "min": 2,   "max": 8,    "step": 1},
+            {"name": "n_times",  "label": "Time (samples)",       "type": "int",
+             "default": 1024, "min": 512, "max": 2048, "step": 64},
+            {"name": "classes",  "label": "Classes",              "type": "int",
+             "default": 4,   "min": 2,   "max": 4,    "step": 1},
         ],
     },
-    "eegbci": {
-        "label": "Motor imagery — real EEG (downloads once)",
-        "blurb": "Real recordings of a person imagining moving their left vs. "
-                 "right hand. Channels are fixed by the experiment (C3, Cz, C4); "
-                 "you choose how many seconds each clip is.",
+    "alpha": {
+        "label": "Real: eyes open vs closed (alpha)",
+        "blurb": "Real EEG, two classes: eyes OPEN vs CLOSED. Alpha waves grow "
+                 "when the eyes close (occipital channels). Choose how many "
+                 "channels and the clip length; the 2 classes and the sampling "
+                 "rate are fixed by the recording.",
+        "fixed": "Fixed by the dataset: 2 classes, sampling rate 160 Hz.",
         "params": [
-            {"name": "clip", "label": "Clip length (seconds)", "type": "float",
-             "default": 2.0, "min": 1.0, "max": 4.0, "step": 0.5},
+            {"name": "channels", "label": "Channels to use",      "type": "int",
+             "default": 6,   "min": 2,   "max": len(tl.ALPHA_POOL), "step": 1},
+            {"name": "clip",     "label": "Clip length (seconds)", "type": "float",
+             "default": 2.0, "min": 2.0, "max": 4.0,  "step": 0.5},
+        ],
+    },
+    "motor": {
+        "label": "Real: imagine LEFT vs RIGHT hand",
+        "blurb": "Real EEG, two classes: imagine moving the LEFT vs RIGHT hand "
+                 "(motor channels). Choose how many channels and the clip length; "
+                 "the 2 classes and the sampling rate are fixed by the recording. "
+                 "The hardest task here.",
+        "fixed": "Fixed by the dataset: 2 classes, sampling rate 160 Hz.",
+        "params": [
+            {"name": "channels", "label": "Channels to use",      "type": "int",
+             "default": 3,   "min": 2,   "max": len(tl.MOTOR_POOL), "step": 1},
+            {"name": "clip",     "label": "Clip length (seconds)", "type": "float",
+             "default": 2.0, "min": 2.0, "max": 4.0,  "step": 0.5},
         ],
     },
 }
 
 MODELS = [
     {"name": "shallow", "label": "ShallowFBCSPNet — small & fast (good default)"},
-    {"name": "eegnet",  "label": "EEGNet — compact, few parameters"},
     {"name": "deep",    "label": "Deep4Net — deeper, needs more data"},
+    {"name": "eegnet",  "label": "EEGNet — compact, few parameters"},
 ]
 
 _train_lock = threading.Lock()   # one training at a time (protects Jetson memory)
@@ -86,20 +109,12 @@ def coerce(dataset, raw):
 
 def _load(dataset, body):
     """Load a dataset for preview or training, with matching params so both see
-    the same data. The web app's synthetic is the Colab kind: random, no pattern."""
+    the same data. The web app's synthetic is the Colab kind: random, no pattern.
+    Returns (X, y, class_names, sfreq, ch_names)."""
     params = coerce(dataset, body.get("params", {}))
     if dataset == "synthetic":
         params.setdefault("pattern", False)
-    return (*tl.get_data(dataset, **params), params)
-
-
-def _ch_names(dataset, n_chans):
-    """Display names per channel. eegbci is recorded at C3/Cz/C4; synthetic is
-    generic ch1…chN — same as the notebook."""
-    if dataset == "eegbci":
-        base = ["C3", "Cz", "C4"]
-        return (base + [f"ch{i+1}" for i in range(len(base), n_chans)])[:n_chans]
-    return [f"ch{i+1}" for i in range(n_chans)]
+    return tl.get_data(dataset, **params)
 
 
 # How much of the (potentially huge) data to ship to the page.
@@ -110,10 +125,9 @@ CH_SHOW = 8          # cap channels shown so the tables stay readable
 
 def do_preview(body):
     dataset = body["dataset"]
-    X, y, classes, sfreq, _ = _load(dataset, body)
+    X, y, classes, sfreq, ch_names = _load(dataset, body)
     ntr, C, T = int(X.shape[0]), int(X.shape[1]), int(X.shape[2])
     counts = {c: int((y == i).sum()) for i, c in enumerate(classes)}
-    ch_names = _ch_names(dataset, C)
     ch_show = min(C, CH_SHOW)
 
     def t_ms(sample):
@@ -172,7 +186,7 @@ def do_train(body):
     lr = float(body.get("lr", 6.25e-4))
     batch = int(body.get("batch", 16))
     device = body.get("device", "auto")   # auto = GPU when it fits, else CPU
-    X, y, classes, _, _ = _load(dataset, body)
+    X, y, classes, _, _ = _load(dataset, body)   # (X, y, classes, sfreq, ch_names)
     with _train_lock:                      # one training at a time (protect memory)
         res = tl.train_model(X, y, classes, model=model, epochs=epochs,
                              lr=lr, batch=batch, device=device)
