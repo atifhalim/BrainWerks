@@ -48,11 +48,28 @@ MODELS = {"shallow": ShallowFBCSPNet, "deep": Deep4Net, "eegnet": EEGNet}
 #   X : float32 array (trials, channels, time)   in microvolts
 #   y : int64   array (trials,)                  class index per trial
 # --------------------------------------------------------------------------- #
-def load_synthetic(trials=120, channels=3, n_times=1024, classes=4, seed=0):
-    """Random noise + a per-class sine bump, so a model can score above chance
-    without any download. Every knob here is adjustable in the web app."""
+def load_synthetic(trials=120, channels=3, n_times=1024, classes=4, seed=0,
+                   pattern=True):
+    """Synthetic EEG-shaped data. Two flavors, chosen by `pattern`:
+
+      pattern=True  (default): random noise + a per-class sine bump, so each
+          class carries a distinct rhythm a model can learn — it scores well
+          above chance with no download. Good for verifying the pipeline runs
+          (CLI, two-box smoke test).
+      pattern=False: pure random noise with RANDOM labels — there is NO pattern,
+          so accuracy should stay near chance. This is what Tutorial #1 (the
+          slides and the Colab notebook) teaches: random data → no learning.
+
+    Every knob here is adjustable in the web app."""
     rng = np.random.default_rng(seed)
     sfreq = 128.0
+    if not pattern:
+        # Colab semantics: labels are independent of the signal, so nothing to
+        # learn. ~8 µV of noise, like the notebook's synthetic source.
+        X = (rng.standard_normal((trials, channels, n_times)) * 8.0).astype("float32")
+        y = rng.integers(0, classes, trials).astype("int64")
+        names = [f"class {i}" for i in range(classes)]
+        return X, y, names, sfreq
     t = np.arange(n_times) / sfreq
     y = np.tile(np.arange(classes), trials // classes + 1)[:trials].astype("int64")
     rng.shuffle(y)

@@ -33,12 +33,32 @@ Change the port with `PORT=9000 python3 server.py` if 8000 is taken.
 
 | Dataset | Real data? | Download? | You can change |
 |---|---|---|---|
-| **Synthetic** | No (made-up but learnable) | None | clips, channels, samples, classes |
+| **Synthetic (random noise)** | No — random noise with **random labels** | None | clips, channels, samples, classes |
 | **Motor imagery (eegbci)** | Yes — imagined left vs. right hand | Once, ~small | clip length (seconds) |
 
-Start with **Synthetic** — it's instant and needs no network, so you can confirm
-the whole loop in seconds. Then switch to **Motor imagery** for real EEG (the
-first run downloads a sample, which can take a minute).
+Start with **Synthetic** to confirm the whole loop in seconds (no network). It is
+deliberately **random with no pattern**, exactly like the Tutorial #1 slides and
+Colab notebook — so accuracy should stay **near chance** (100 ÷ classes %). That
+is the point: *no pattern, no learning*. Then switch to **Motor imagery** for
+real EEG that a model can actually learn (the first run downloads a sample, which
+can take a minute).
+
+> The command-line `train_local.py --source synthetic` uses a *learnable*
+> synthetic (a per-class rhythm) instead — it exists to prove the training
+> pipeline runs and scores above chance. The web app opts into the random,
+> near-chance version so it matches the tutorial.
+
+## What "View the data" shows
+
+Two views, mirroring the Colab notebooks:
+
+1. **Raw data — one clip, up close.** A table of one epoch: each **row is a moment
+   in time** (a sample), each **column is a channel** (an electrode), each number
+   is a voltage in **µV**.
+2. **The pipeline — stack every clip into X and y.** Every clip stacked into
+   **X** `(trials, channels, time)` with a label vector **y**, shown as a
+   scrollable *Trial × Sample × channels* table — the tensors that go into the
+   model.
 
 ## Notes
 

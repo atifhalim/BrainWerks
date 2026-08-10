@@ -37,9 +37,11 @@ PORT = int(os.environ.get("PORT", "8000"))
 # UI always matches what the dataset actually lets you change (like the Colab).
 DATASETS = {
     "synthetic": {
-        "label": "Synthetic — instant, no download",
-        "blurb": "Made-up but learnable data. Every knob is yours to change. "
-                 "Great for a first run and for experimenting fast.",
+        "label": "Synthetic (random noise) — instant, no download",
+        "blurb": "Random noise with RANDOM class labels — there is NO pattern, "
+                 "so accuracy should stay near chance (100 ÷ classes %). That is "
+                 "the whole point of Tutorial #1: no pattern, no learning. Every "
+                 "knob below is yours to set.",
         "params": [
             {"name": "trials",   "label": "Clips (trials)",     "type": "int",
              "default": 120, "min": 40, "max": 400, "step": 4},
@@ -82,42 +84,101 @@ def coerce(dataset, raw):
     return out
 
 
+def _load(dataset, body):
+    """Load a dataset for preview or training, with matching params so both see
+    the same data. The web app's synthetic is the Colab kind: random, no pattern."""
+    params = coerce(dataset, body.get("params", {}))
+    if dataset == "synthetic":
+        params.setdefault("pattern", False)
+    return (*tl.get_data(dataset, **params), params)
+
+
+def _ch_names(dataset, n_chans):
+    """Display names per channel. eegbci is recorded at C3/Cz/C4; synthetic is
+    generic ch1…chN — same as the notebook."""
+    if dataset == "eegbci":
+        base = ["C3", "Cz", "C4"]
+        return (base + [f"ch{i+1}" for i in range(len(base), n_chans)])[:n_chans]
+    return [f"ch{i+1}" for i in range(n_chans)]
+
+
+# How much of the (potentially huge) data to ship to the page.
+RAW_ROWS = 15        # raw-data table: first N time-samples of one clip
+TENSOR_ROWS = 40     # pipeline table: first N of the trials×samples rows
+CH_SHOW = 8          # cap channels shown so the tables stay readable
+
+
 def do_preview(body):
     dataset = body["dataset"]
-    params = coerce(dataset, body.get("params", {}))
-    X, y, classes, sfreq = tl.get_data(dataset, **params)
+    X, y, classes, sfreq, _ = _load(dataset, body)
+    ntr, C, T = int(X.shape[0]), int(X.shape[1]), int(X.shape[2])
     counts = {c: int((y == i).sum()) for i, c in enumerate(classes)}
-    # A small readable slice of raw data: trial 0, up to 8 channels, 12 samples.
-    ch = min(X.shape[1], 8)
-    cols = min(X.shape[2], 12)
-    table = np.round(X[0, :ch, :cols], 1).tolist()
-    return {
-        "shape": list(X.shape),
-        "trials": int(X.shape[0]), "channels": int(X.shape[1]),
-        "n_times": int(X.shape[2]), "sfreq": float(sfreq),
-        "clip_sec": (X.shape[2] / sfreq) if sfreq else None,
-        "classes": list(classes), "chance": 100.0 / len(classes),
-        "counts": counts,
-        "table": table, "row_labels": [f"ch{i+1}" for i in range(ch)],
-        "col_labels": [f"t{i}" for i in range(cols)],
-        "units": "microvolts (µV)",
+    ch_names = _ch_names(dataset, C)
+    ch_show = min(C, CH_SHOW)
+
+    def t_ms(sample):
+        return round(sample / sfreq * 1000, 1) if sfreq else float(sample)
+
+    # 1) RAW DATA — one clip, as Colab's "Explore the data": rows are moments in
+    #    time (samples), columns are channels, values are µV.
+    r_rows = min(T, RAW_ROWS)
+    clip0 = np.round(X[0, :ch_show, :r_rows], 2)          # (ch_show, r_rows)
+    raw = {
+        "ch_names": ch_names[:ch_show],
+        "rows": [[t_ms(s)] + clip0[:, s].tolist() for s in range(r_rows)],
+        "n_show": r_rows, "n_total": T,
     }
+
+    # 2) PIPELINE TENSOR — stack every clip into X and y, as Colab's Step 2:
+    #    a scrollable table with Trial (which epoch), Sample, Time, then channels.
+    t_rows, count = [], 0
+    Xr = np.round(X[:, :ch_show, :], 2)
+    for tr in range(ntr):
+        for s in range(T):
+            t_rows.append([tr, s, t_ms(s)] + Xr[tr, :, s].tolist())
+            count += 1
+            if count >= TENSOR_ROWS:
+                break
+        if count >= TENSOR_ROWS:
+            break
+    tensor = {
+        "ch_names": ch_names[:ch_show],
+        "y_head": [int(v) for v in y[:14]],
+        "rows": t_rows, "n_show": len(t_rows), "n_total": ntr * T,
+    }
+
+    return {
+        "shape": [ntr, C, T], "trials": ntr, "channels": C, "n_times": T,
+        "sfreq": float(sfreq), "clip_sec": (T / sfreq) if sfreq else None,
+        "classes": list(classes), "chance": 100.0 / len(classes),
+        "counts": counts, "ch_names": ch_names, "ch_show": ch_show,
+        "raw": raw, "tensor": tensor, "units": "microvolts (µV)",
+    }
+
+
+def _verdict(acc, chance):
+    """Same plain-language read as the Colab notebook's Step 4."""
+    if acc >= chance + 0.15:
+        return "Well above chance — it really learned the pattern!"
+    if acc >= chance + 0.05:
+        return "A bit above chance — try more passes or another model."
+    return "Around chance — like the random-noise task, no real pattern was found."
 
 
 def do_train(body):
     dataset = body["dataset"]
-    params = coerce(dataset, body.get("params", {}))
     model = body.get("model", "shallow")
     epochs = int(body.get("epochs", 25))
     lr = float(body.get("lr", 6.25e-4))
     batch = int(body.get("batch", 16))
     device = body.get("device", "auto")   # auto = GPU when it fits, else CPU
-    X, y, classes, _ = tl.get_data(dataset, **params)
+    X, y, classes, _, _ = _load(dataset, body)
     with _train_lock:                      # one training at a time (protect memory)
         res = tl.train_model(X, y, classes, model=model, epochs=epochs,
                              lr=lr, batch=batch, device=device)
     res["accuracy_pct"] = round(res["accuracy"] * 100, 1)
     res["chance_pct"] = round(res["chance"] * 100, 1)
+    res["verdict"] = _verdict(res["accuracy"], res["chance"])
     return res
 
 
@@ -161,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    print(f"BrainWerks Tutorial #1 web app")
+    print("BrainWerks Tutorial #1 web app")
     print(f"  open  http://localhost:{PORT}   (or http://<jetson-ip>:{PORT} "
           f"from another computer)")
     print(f"  GPU visible to PyTorch: {tl.torch.cuda.is_available()}   "
