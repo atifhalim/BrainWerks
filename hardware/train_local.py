@@ -119,13 +119,12 @@ def resolve_device(choice="auto"):
     return choice
 
 
-def train_model(X, y, classes, model="shallow", epochs=25, lr=6.25e-4,
-                batch=16, device="cpu", seed=20240205):
-    """Train and evaluate. Returns a plain dict (JSON-friendly for the web app)."""
+def _fit_once(Xtr, ytr, Xte, yte, classes, model, epochs, lr, batch, device, seed):
     set_random_seeds(seed, cuda=(device == "cuda"))
-    n_cls, C, T = len(classes), int(X.shape[1]), int(X.shape[2])
-    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25,
-                                          random_state=1, stratify=y)
+    n_cls, C, T = len(classes), int(Xtr.shape[1]), int(Xtr.shape[2])
+    if device == "cuda":
+        torch.backends.cudnn.benchmark = True   # fixed input size -> faster kernels
+        torch.cuda.empty_cache()
     clf = EEGClassifier(make_model(model, C, T, n_cls),
                         criterion=torch.nn.CrossEntropyLoss,
                         optimizer=torch.optim.Adam, optimizer__lr=lr,
@@ -135,10 +134,41 @@ def train_model(X, y, classes, model="shallow", epochs=25, lr=6.25e-4,
     clf.fit(Xtr, ytr)
     acc = float(clf.score(Xte, yte))
     train_loss = [float(r["train_loss"]) for r in clf.history if "train_loss" in r]
+    return acc, train_loss
+
+
+def train_model(X, y, classes, model="shallow", epochs=25, lr=6.25e-4,
+                batch=16, device="auto", seed=20240205):
+    """Train and evaluate. Returns a JSON-friendly dict.
+
+    Resource-optimized for the Xavier NX's shared CPU/GPU memory: 'auto' runs on
+    the GPU when one is present, and if the GPU runs out of the shared memory it
+    transparently falls back to the CPU for that run instead of crashing. You get
+    GPU speed whenever it fits, with no manual constraint."""
+    device = resolve_device(device)
+    n_cls, C, T = len(classes), int(X.shape[1]), int(X.shape[2])
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25,
+                                          random_state=1, stratify=y)
+    note = ""
+    try:
+        acc, train_loss = _fit_once(Xtr, ytr, Xte, yte, classes, model,
+                                    epochs, lr, batch, device, seed)
+    except RuntimeError as e:                    # e.g. CUDA out of memory
+        if device == "cuda" and "out of memory" in str(e).lower():
+            torch.cuda.empty_cache()
+            device = "cpu"
+            note = "GPU was out of free memory, so this run used the CPU."
+            acc, train_loss = _fit_once(Xtr, ytr, Xte, yte, classes, model,
+                                        epochs, lr, batch, device, seed)
+        else:
+            raise
+    finally:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()             # release memory for the next run
     return {"accuracy": acc, "chance": 1.0 / n_cls, "classes": list(classes),
             "n_train": int(len(Xtr)), "n_test": int(len(Xte)),
             "n_chans": C, "n_times": T, "model": model, "device": device,
-            "train_loss": train_loss}
+            "train_loss": train_loss, "note": note}
 
 
 def main():
@@ -155,7 +185,8 @@ def main():
     args = ap.parse_args()
 
     device = resolve_device(args.device)
-    print(f"Training on: {device.upper()}  (PyTorch {torch.__version__})")
+    print(f"Requested device: {device.upper()}  (GPU used when it fits, else CPU)"
+          f"  ·  PyTorch {torch.__version__}")
 
     if args.source == "npz":
         if not args.npz:
@@ -171,7 +202,10 @@ def main():
           f"chance={100/len(classes):.0f}%  sfreq={sfreq:.0f}Hz")
     res = train_model(X, y, classes, model=args.model, epochs=args.epochs,
                       lr=args.lr, batch=args.batch, device=device)
-    print(f"\nTEST ACCURACY = {res['accuracy']*100:.1f}%   "
+    if res["note"]:
+        print(res["note"])
+    print(f"\nTrained on: {res['device'].upper()}")
+    print(f"TEST ACCURACY = {res['accuracy']*100:.1f}%   "
           f"(chance = {res['chance']*100:.0f}%)")
 
 

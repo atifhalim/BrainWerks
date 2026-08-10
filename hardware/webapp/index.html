@@ -87,6 +87,12 @@
 
   <div class="card">
     <div class="step">Step 4 · Train &amp; see the accuracy</div>
+    <label>Run on</label>
+    <select id="device">
+      <option value="auto">Auto — use the GPU when it fits, CPU otherwise (recommended)</option>
+      <option value="cuda">GPU</option>
+      <option value="cpu">CPU</option>
+    </select>
     <p class="blurb" id="dev-note"></p>
     <button id="train">🚀  Train the model</button>
     <div id="status" class="muted" style="margin-top:12px"></div>
@@ -109,9 +115,15 @@ async function boot() {
   for (const [k, v] of Object.entries(CFG.datasets))
     $('dataset').add(new Option(v.label, k));
   for (const m of CFG.models) $('model').add(new Option(m.label, m.name));
-  $('dev-note').textContent = CFG.cuda
-    ? 'Your Jetson GPU is available, but small EEG models train instantly on the CPU — so we use the CPU to avoid running out of shared memory.'
-    : 'Training on the CPU (fast for these small models).';
+  if (!CFG.cuda) {
+    $('device').querySelector('option[value="cuda"]').disabled = true;
+    $('dev-note').textContent =
+      'No GPU is visible to PyTorch here, so training runs on the CPU.';
+  } else {
+    $('dev-note').textContent = 'Auto uses your Jetson GPU when its shared memory ' +
+      'has room, and falls back to the CPU automatically if it does not — so a ' +
+      'run gets GPU speed when it fits and never just crashes.';
+  }
   $('dataset').onchange = renderParams;
   renderParams();
 }
@@ -169,14 +181,15 @@ $('train').onclick = async () => {
     const r = await post('/api/train', {
       dataset: $('dataset').value, params: collectParams(),
       model: $('model').value, epochs: $('epochs').value,
-      batch: $('batch').value, lr: $('lr').value, device: 'cpu' });
+      batch: $('batch').value, lr: $('lr').value, device: $('device').value });
     $('status').textContent = '';
     $('acc').textContent = r.accuracy_pct + '%';
     $('chance').textContent = ` test accuracy  ·  chance = ${r.chance_pct}%`;
     $('accbar').style.width = Math.min(100, r.accuracy_pct) + '%';
     $('rmeta').textContent =
       `${r.model} · trained on ${r.n_train} clips, tested on ${r.n_test} · ` +
-      `${r.n_chans} channels × ${r.n_times} samples · ${r.device.toUpperCase()}`;
+      `${r.n_chans} channels × ${r.n_times} samples · ran on ${r.device.toUpperCase()}` +
+      (r.note ? ' · ' + r.note : '');
     drawLoss(r.train_loss);
     $('result').classList.remove('hidden');
   } catch (e) {

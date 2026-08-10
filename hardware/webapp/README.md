@@ -42,9 +42,13 @@ first run downloads a sample, which can take a minute).
 
 ## Notes
 
-- **Training uses the CPU by default.** These EEG models are tiny, so the CPU
-  finishes them in seconds, and it sidesteps the shared-memory `CUDA out of
-  memory` error on the 8GB Xavier NX. The page tells you if a GPU is present.
+- **Uses both CPU and GPU, optimized — no hard constraint.** The default is
+  **Auto**: it runs on the GPU when the Xavier NX's shared memory has room, and
+  falls back to the CPU automatically if the GPU runs out — so you get GPU speed
+  whenever it fits and a run never just crashes. You can also force **GPU** or
+  **CPU** from the dropdown. After each run the server frees the GPU cache for
+  the next one. The page shows which device actually ran (and says so if a GPU
+  run fell back to CPU).
 - **One training at a time.** The server serializes training runs with a lock so
   two clicks can't fight over the Jetson's memory.
 - **To add another dataset or model**, edit the `DATASETS` / `MODELS` tables at

@@ -111,9 +111,9 @@ def do_train(body):
     epochs = int(body.get("epochs", 25))
     lr = float(body.get("lr", 6.25e-4))
     batch = int(body.get("batch", 16))
-    device = tl.resolve_device(body.get("device", "cpu"))  # cpu default = no OOM
+    device = body.get("device", "auto")   # auto = GPU when it fits, else CPU
     X, y, classes, _ = tl.get_data(dataset, **params)
-    with _train_lock:
+    with _train_lock:                      # one training at a time (protect memory)
         res = tl.train_model(X, y, classes, model=model, epochs=epochs,
                              lr=lr, batch=batch, device=device)
     res["accuracy_pct"] = round(res["accuracy"] * 100, 1)
@@ -165,7 +165,7 @@ def main():
     print(f"  open  http://localhost:{PORT}   (or http://<jetson-ip>:{PORT} "
           f"from another computer)")
     print(f"  GPU visible to PyTorch: {tl.torch.cuda.is_available()}   "
-          f"(training defaults to CPU to avoid out-of-memory)")
+          f"(Auto uses the GPU when it fits, and falls back to CPU otherwise)")
     print("  Ctrl+C to stop.")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
