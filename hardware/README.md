@@ -11,6 +11,7 @@ container setup, the "bake your own image" step, and a one-command daily startup
 | `train_local.py` | Train a braindecode model locally (CPU or GPU). Works today on public motor-imagery data (`--source eegbci`) or your own recordings (`--source npz file.npz`). | braindecode, mne, scikit-learn |
 | `ironbci32_stream.py` | Talk to the IronBCI-32 over USB via BrainFlow. `--mode monitor` shows live signal; `--mode record` runs a cued session and saves a labeled `X, y` dataset (`.npz`). | brainflow, numpy |
 | `setup_jetson_ironbci32.sh` | One-shot Jetson prep for the board: build tools, serial permissions, build BrainFlow from source, verify IronBCI-32 support. | — |
+| `webapp/` | Bare-bones **web app** for Tutorial #1 — pick a dataset, view the data, tune parameters, pick a model, train, read the accuracy. Runs on the Jetson, standard library only (no Flask/npm). See [`webapp/README.md`](webapp/README.md). | braindecode, mne (already in the Jetson container) |
 
 ## Quick start
 

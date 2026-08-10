@@ -3,15 +3,22 @@
 train_local.py — train a braindecode model locally (Jetson or any computer).
 
 Data sources:
-  --source eegbci   Public motor-imagery EEG (downloads via MNE). Works today,
-                    no hardware — great for confirming your training setup.
-  --source npz PATH Your own recording saved by ironbci32_stream.py.
+  --source synthetic  Fake but learnable EEG-shaped data. Instant, no download,
+                      no network — great for a first run and for the web app.
+  --source eegbci     Public motor-imagery EEG (downloads via MNE). Real data,
+                      no hardware — confirms your full training setup.
+  --source npz PATH   Your own recording saved by ironbci32_stream.py.
 
 Only needs: braindecode, mne, scikit-learn (which pull in torch + skorch).
 Uses the GPU automatically if PyTorch sees CUDA; otherwise CPU (fine for these).
 
+This file is ALSO a library: hardware/webapp/server.py imports get_data(),
+make_model() and train_model() from here, so the CLI and the web app run the
+exact same code.
+
 Examples
 --------
+  python3 train_local.py --source synthetic --model shallow --epochs 20
   python3 train_local.py --source eegbci --model shallow --epochs 25
   python3 train_local.py --source npz session1.npz --model eegnet --epochs 40
 """
@@ -36,6 +43,27 @@ mne.set_log_level("ERROR")
 MODELS = {"shallow": ShallowFBCSPNet, "deep": Deep4Net, "eegnet": EEGNet}
 
 
+# --------------------------------------------------------------------------- #
+# Data loaders — each returns (X, y, class_names, sfreq)
+#   X : float32 array (trials, channels, time)   in microvolts
+#   y : int64   array (trials,)                  class index per trial
+# --------------------------------------------------------------------------- #
+def load_synthetic(trials=120, channels=3, n_times=1024, classes=4, seed=0):
+    """Random noise + a per-class sine bump, so a model can score above chance
+    without any download. Every knob here is adjustable in the web app."""
+    rng = np.random.default_rng(seed)
+    sfreq = 128.0
+    t = np.arange(n_times) / sfreq
+    y = np.tile(np.arange(classes), trials // classes + 1)[:trials].astype("int64")
+    rng.shuffle(y)
+    X = (rng.standard_normal((trials, channels, n_times)) * 5.0).astype("float32")
+    for i, c in enumerate(y):                 # each class gets its own rhythm
+        freq = 6.0 + 2.0 * c                  # 6, 8, 10, 12 … Hz
+        X[i] += (12.0 * np.sin(2 * np.pi * freq * t)).astype("float32")
+    names = [f"class {i}" for i in range(classes)]
+    return X, y, names, sfreq
+
+
 def load_eegbci(clip=2.0, channels=("C3", "Cz", "C4")):
     raws = []
     for run in (4, 8, 12):                       # imagined left/right fist
@@ -51,17 +79,72 @@ def load_eegbci(clip=2.0, channels=("C3", "Cz", "C4")):
                     baseline=None, preload=True)
     X = (ep.get_data() * 1e6).astype("float32")
     y = (ep.events[:, -1] == eid["T2"]).astype("int64")
-    return X, y, ["left hand", "right hand"]
+    return X, y, ["left hand", "right hand"], float(raw.info["sfreq"])
 
 
 def load_npz(path):
     d = np.load(path, allow_pickle=True)
-    return d["X"].astype("float32"), d["y"].astype("int64"), list(d["classes"])
+    sfreq = float(d["sfreq"]) if "sfreq" in d else 0.0
+    return (d["X"].astype("float32"), d["y"].astype("int64"),
+            list(d["classes"]), sfreq)
+
+
+def get_data(source, **params):
+    """Dispatch to a loader by name. Extra params are passed through."""
+    if source == "synthetic":
+        return load_synthetic(**params)
+    if source == "eegbci":
+        return load_eegbci(**params)
+    if source == "npz":
+        return load_npz(params["path"])
+    raise ValueError(f"unknown source: {source}")
+
+
+# --------------------------------------------------------------------------- #
+# Model + training
+# --------------------------------------------------------------------------- #
+def make_model(name, n_chans, n_times, n_classes):
+    Model = MODELS[name]
+    extra = {"final_conv_length": "auto"} if name in ("shallow", "deep") else {}
+    try:                                     # braindecode >= 0.8 naming
+        return Model(n_chans=n_chans, n_outputs=n_classes, n_times=n_times, **extra)
+    except TypeError:                        # older braindecode naming
+        return Model(in_chans=n_chans, n_classes=n_classes,
+                     input_window_samples=n_times, **extra)
+
+
+def resolve_device(choice="auto"):
+    if choice == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    return choice
+
+
+def train_model(X, y, classes, model="shallow", epochs=25, lr=6.25e-4,
+                batch=16, device="cpu", seed=20240205):
+    """Train and evaluate. Returns a plain dict (JSON-friendly for the web app)."""
+    set_random_seeds(seed, cuda=(device == "cuda"))
+    n_cls, C, T = len(classes), int(X.shape[1]), int(X.shape[2])
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25,
+                                          random_state=1, stratify=y)
+    clf = EEGClassifier(make_model(model, C, T, n_cls),
+                        criterion=torch.nn.CrossEntropyLoss,
+                        optimizer=torch.optim.Adam, optimizer__lr=lr,
+                        batch_size=batch, max_epochs=epochs,
+                        iterator_train__drop_last=False,   # train even on small sets
+                        train_split=ValidSplit(0.2), device=device, verbose=1)
+    clf.fit(Xtr, ytr)
+    acc = float(clf.score(Xte, yte))
+    train_loss = [float(r["train_loss"]) for r in clf.history if "train_loss" in r]
+    return {"accuracy": acc, "chance": 1.0 / n_cls, "classes": list(classes),
+            "n_train": int(len(Xtr)), "n_test": int(len(Xte)),
+            "n_chans": C, "n_times": T, "model": model, "device": device,
+            "train_loss": train_loss}
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", choices=["eegbci", "npz"], default="eegbci")
+    ap.add_argument("--source", choices=["synthetic", "eegbci", "npz"],
+                    default="eegbci")
     ap.add_argument("--npz", help="path to a .npz from ironbci32_stream.py")
     ap.add_argument("--model", choices=list(MODELS), default="shallow")
     ap.add_argument("--epochs", type=int, default=25)
@@ -71,44 +154,25 @@ def main():
                     help="auto uses GPU if free; cpu is instant for small models")
     args = ap.parse_args()
 
-    if args.device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    else:
-        device = args.device
-    set_random_seeds(20240205, cuda=(device == "cuda"))
+    device = resolve_device(args.device)
     print(f"Training on: {device.upper()}  (PyTorch {torch.__version__})")
 
     if args.source == "npz":
         if not args.npz:
             ap.error("--source npz requires --npz PATH")
-        X, y, classes = load_npz(args.npz)
+        X, y, classes, sfreq = load_npz(args.npz)
+    elif args.source == "synthetic":
+        X, y, classes, sfreq = load_synthetic()
     else:
         print("Loading public motor-imagery EEG (first run downloads a sample)…")
-        X, y, classes = load_eegbci()
+        X, y, classes, sfreq = load_eegbci()
 
-    n_cls, C, T = len(classes), X.shape[1], X.shape[2]
-    print(f"data X={X.shape}  classes={classes}  chance={100/n_cls:.0f}%")
-
-    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25,
-                                          random_state=1, stratify=y)
-    Model = MODELS[args.model]
-    extra = {"final_conv_length": "auto"} if args.model in ("shallow", "deep") else {}
-
-    def make_model(**kw):
-        try:                                     # braindecode >= 0.8 naming
-            return Model(n_chans=C, n_outputs=n_cls, n_times=T, **kw)
-        except TypeError:                        # older braindecode naming
-            return Model(in_chans=C, n_classes=n_cls, input_window_samples=T, **kw)
-
-    mod = make_model(**extra)
-    clf = EEGClassifier(mod, criterion=torch.nn.CrossEntropyLoss,
-                        optimizer=torch.optim.Adam, optimizer__lr=args.lr,
-                        batch_size=args.batch, max_epochs=args.epochs,
-                        iterator_train__drop_last=False,   # train even on small sets
-                        train_split=ValidSplit(0.2), device=device, verbose=1)
-    clf.fit(Xtr, ytr)
-    acc = clf.score(Xte, yte)
-    print(f"\nTEST ACCURACY = {acc*100:.1f}%   (chance = {100/n_cls:.0f}%)")
+    print(f"data X={X.shape}  classes={classes}  "
+          f"chance={100/len(classes):.0f}%  sfreq={sfreq:.0f}Hz")
+    res = train_model(X, y, classes, model=args.model, epochs=args.epochs,
+                      lr=args.lr, batch=args.batch, device=device)
+    print(f"\nTEST ACCURACY = {res['accuracy']*100:.1f}%   "
+          f"(chance = {res['chance']*100:.0f}%)")
 
 
 if __name__ == "__main__":

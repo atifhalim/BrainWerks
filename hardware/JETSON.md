@@ -115,7 +115,24 @@ Jetson and survive even with `--rm`. Keep everything in `~/bci`.
 
 ---
 
-## 5. Later: train on your own headset recordings
+## 5. Optional: the point-and-click web app
+
+Prefer clicking to typing? There's a bare-bones website that does the whole
+Tutorial #1 loop (pick a dataset → view the data → change parameters → pick a
+model → train → read the accuracy), running on the Jetson. It needs nothing
+extra installed. Inside the container:
+
+```bash
+cd hardware/webapp   # (clone or copy the repo into ~/bci first)
+python3 server.py
+```
+
+Then open `http://localhost:8000` on the Jetson, or `http://<jetson-ip>:8000`
+from your laptop on the same Wi-Fi (`hostname -I` shows the Jetson's IP; the
+`--network host` flag is what makes the port reachable). See
+[`webapp/README.md`](webapp/README.md).
+
+## 6. Later: train on your own headset recordings
 
 Once the IronBCI-32 arrives, record a labeled session (on battery!) and train on
 it — see `README.md` for `ironbci32_stream.py`. In short:
