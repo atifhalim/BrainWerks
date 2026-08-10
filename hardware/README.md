@@ -12,6 +12,7 @@ container setup, the "bake your own image" step, and a one-command daily startup
 | `ironbci32_stream.py` | Talk to the IronBCI-32 over USB via BrainFlow. `--mode monitor` shows live signal; `--mode record` runs a cued session and saves a labeled `X, y` dataset (`.npz`). | brainflow, numpy |
 | `setup_jetson_ironbci32.sh` | One-shot Jetson prep for the board: build tools, serial permissions, build BrainFlow from source, verify IronBCI-32 support. | — |
 | `webapp/` | Bare-bones **web app** for Tutorial #1 — pick a dataset, view the data, tune parameters, pick a model, train, read the accuracy. Runs on the Jetson, standard library only (no Flask/npm). See [`webapp/README.md`](webapp/README.md). | braindecode, mne (already in the Jetson container) |
+| `twobox/` | The **two-box design**: a **Sensor Box** (acquire + stream EEG over TCP) cleanly split from a **Compute Box** (collect + train). Both run on one Xavier now (localhost); become two machines later by changing one flag. Design: [`TWO_BOX_DESIGN.md`](TWO_BOX_DESIGN.md); run guide: [`twobox/README.md`](twobox/README.md). | Sensor: numpy (+brainflow); Compute: braindecode, mne |
 
 ## Quick start
 
