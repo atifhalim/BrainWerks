@@ -160,6 +160,19 @@ def _load(dataset, body):
     return _cache[key]
 
 
+def _load_bcic2a_split(body):
+    """BCI IV 2a with the benchmark's cross-session split, cached so the heavy
+    load is shared between 'view' and 'train'. Returns
+    (Xtr, ytr, Xte, yte, classes, sfreq, ch_names)."""
+    subject = coerce("bcic2a", body.get("params", {})).get("subject", 3)
+    key = ("bcic2a-split", int(subject))
+    if key not in _cache:
+        if len(_cache) >= _CACHE_MAX:
+            _cache.pop(next(iter(_cache)))
+        _cache[key] = tl.load_bcic2a_split(subject=int(subject))
+    return _cache[key]
+
+
 # How much of the (potentially huge) data to ship to the page.
 RAW_ROWS = 15        # raw-data table: first N time-samples of one clip
 TENSOR_ROWS = 40     # pipeline table: first N of the trials×samples rows
@@ -168,7 +181,12 @@ CH_SHOW = 8          # cap channels shown so the tables stay readable
 
 def do_preview(body):
     dataset = body["dataset"]
-    X, y, classes, sfreq, ch_names = _load(dataset, body)
+    if dataset == "bcic2a":                       # combine both sessions to view
+        Xtr, ytr, Xte, yte, classes, sfreq, ch_names = _load_bcic2a_split(body)
+        X = np.concatenate([Xtr, Xte])
+        y = np.concatenate([ytr, yte])
+    else:
+        X, y, classes, sfreq, ch_names = _load(dataset, body)
     ntr, C, T = int(X.shape[0]), int(X.shape[1]), int(X.shape[2])
     counts = {c: int((y == i).sum()) for i, c in enumerate(classes)}
     ch_show = min(C, CH_SHOW)
@@ -222,6 +240,9 @@ def _verdict(acc, chance):
     return "Around chance — like the random-noise task, no real pattern was found."
 
 
+BCIC2A_REFERENCE_PCT = 68.4    # braindecode's full-training result, subject 3
+
+
 def do_train(body):
     dataset = body["dataset"]
     model = body.get("model", "shallow")
@@ -229,10 +250,26 @@ def do_train(body):
     lr = float(body.get("lr", 6.25e-4))
     batch = int(body.get("batch", 16))
     device = body.get("device", "auto")   # auto = GPU when it fits, else CPU
-    X, y, classes, _, _ = _load(dataset, body)   # (X, y, classes, sfreq, ch_names)
-    with _train_lock:                      # one training at a time (protect memory)
-        res = tl.train_model(X, y, classes, model=model, epochs=epochs,
-                             lr=lr, batch=batch, device=device)
+
+    if dataset == "bcic2a":
+        # Honest benchmark evaluation: fit on session '0train', score on '1test'.
+        Xtr, ytr, Xte, yte, classes, _, _ = _load_bcic2a_split(body)
+        with _train_lock:
+            res = tl.train_model_presplit(Xtr, ytr, Xte, yte, classes, model=model,
+                                          epochs=epochs, lr=lr, batch=batch,
+                                          device=device)
+        res["split_note"] = ("Trained on session 0train, tested on the held-out "
+                             "session 1test (recorded on a different day).")
+        res["reference_note"] = (f"Reference: the braindecode ShallowFBCSPNet run "
+                                 f"reaches ~{BCIC2A_REFERENCE_PCT:.0f}% here with "
+                                 f"full training (100 epochs). A short run scores "
+                                 f"lower — raise the epochs to close the gap.")
+    else:
+        X, y, classes, _, _ = _load(dataset, body)   # random 75/25 split
+        with _train_lock:                  # one training at a time (protect memory)
+            res = tl.train_model(X, y, classes, model=model, epochs=epochs,
+                                 lr=lr, batch=batch, device=device)
+
     res["accuracy_pct"] = round(res["accuracy"] * 100, 1)
     res["chance_pct"] = round(res["chance"] * 100, 1)
     res["verdict"] = _verdict(res["accuracy"], res["chance"])

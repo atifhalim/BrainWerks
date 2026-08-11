@@ -129,10 +129,13 @@ async function onTrain() {
     const learned = r.accuracy_pct >= r.chance_pct + 5;
     $('verdict').textContent = r.verdict || '';
     $('verdict').className = learned ? 'good' : 'muted';
-    $('rmeta').textContent =
+    let meta =
       `${r.model} · trained on ${r.n_train} clips, tested on ${r.n_test} · ` +
       `${r.n_chans} channels × ${r.n_times} samples · ran on ${r.device.toUpperCase()}` +
       (r.note ? ' · ' + r.note : '');
+    if (r.split_note) meta += '<br>' + r.split_note;
+    if (r.reference_note) meta += '<br>' + r.reference_note;
+    $('rmeta').innerHTML = meta;
     drawLoss(r.train_loss);
     $('result').classList.remove('hidden');
   } catch (e) {
