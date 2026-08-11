@@ -44,15 +44,49 @@ MODELS = {"shallow": ShallowFBCSPNet, "deep": Deep4Net, "eegnet": EEGNet}
 
 
 # --------------------------------------------------------------------------- #
-# Data loaders — each returns (X, y, class_names, sfreq)
-#   X : float32 array (trials, channels, time)   in microvolts
-#   y : int64   array (trials,)                  class index per trial
+# Data loaders — each returns (X, y, class_names, sfreq, ch_names)
+#   X        : float32 array (trials, channels, time)   in microvolts
+#   y        : int64   array (trials,)                  class index per trial
+#   ch_names : the channel (electrode) name of each row of X
+#
+# The three datasets and their editable knobs mirror Tutorial #1's Colab
+# notebook exactly: synthetic lets you set everything; the two real datasets let
+# you choose how many channels and the clip length, while their number of
+# classes and sampling rate are fixed by the recording.
 # --------------------------------------------------------------------------- #
-def load_synthetic(trials=120, channels=3, n_times=1024, classes=4, seed=0):
-    """Random noise + a per-class sine bump, so a model can score above chance
-    without any download. Every knob here is adjustable in the web app."""
+EEGBCI_SUBJECT = 1
+# Preferred channels per real task, in priority order (only those actually in
+# the recording are used, first N as requested) — same pools as the Colab.
+ALPHA_POOL = ["O1", "Oz", "O2", "P3", "Pz", "P4", "POz",
+              "PO3", "PO4", "P1", "P2", "P7", "P8"]     # occipital → alpha
+MOTOR_POOL = ["C3", "Cz", "C4", "C1", "C2", "CP3", "CP4",
+              "FC3", "FC4", "C5", "C6", "CP1", "CP2"]   # motor cortex
+
+
+def load_synthetic(trials=100, channels=3, n_times=1024, classes=4, seed=0,
+                   pattern=True):
+    """Synthetic EEG-shaped data at 250 Hz (4 ms per sample), like the deck.
+    Two flavors, chosen by `pattern`:
+
+      pattern=True  (default): random noise + a per-class sine bump, so each
+          class carries a distinct rhythm a model can learn — it scores well
+          above chance with no download. Good for verifying the pipeline runs
+          (CLI, two-box smoke test).
+      pattern=False: pure random noise with RANDOM labels — there is NO pattern,
+          so accuracy should stay near chance. This is what Tutorial #1 (the
+          slides and the Colab notebook) teaches: random data → no learning.
+
+    Every knob here is adjustable in the web app."""
     rng = np.random.default_rng(seed)
-    sfreq = 128.0
+    sfreq = 250.0                                 # 250 Hz → 4 ms per sample
+    names = [f"class {i}" for i in range(classes)]
+    ch_names = [f"ch{i+1}" for i in range(channels)]
+    if not pattern:
+        # Colab semantics: labels are independent of the signal, so nothing to
+        # learn. ~8 µV of noise, like the notebook's synthetic source.
+        X = (rng.standard_normal((trials, channels, n_times)) * 8.0).astype("float32")
+        y = rng.integers(0, classes, trials).astype("int64")
+        return X, y, names, sfreq, ch_names
     t = np.arange(n_times) / sfreq
     y = np.tile(np.arange(classes), trials // classes + 1)[:trials].astype("int64")
     rng.shuffle(y)
@@ -60,41 +94,76 @@ def load_synthetic(trials=120, channels=3, n_times=1024, classes=4, seed=0):
     for i, c in enumerate(y):                 # each class gets its own rhythm
         freq = 6.0 + 2.0 * c                  # 6, 8, 10, 12 … Hz
         X[i] += (12.0 * np.sin(2 * np.pi * freq * t)).astype("float32")
-    names = [f"class {i}" for i in range(classes)]
-    return X, y, names, sfreq
+    return X, y, names, sfreq, ch_names
 
 
-def load_eegbci(clip=2.0, channels=("C3", "Cz", "C4")):
-    raws = []
-    for run in (4, 8, 12):                       # imagined left/right fist
-        fn = mne.datasets.eegbci.load_data(1, [run], update_path=True)
-        r = mne.io.read_raw_edf(fn[0], preload=True)
-        mne.datasets.eegbci.standardize(r)
-        raws.append(r)
-    raw = mne.concatenate_raws(raws)
-    raw.pick(list(channels))
+def _eegbci_run(run):
+    """Load one PhysioNet EEGBCI run for subject 1, channel names standardized."""
+    fn = mne.datasets.eegbci.load_data(EEGBCI_SUBJECT, [run], update_path=True)
+    r = mne.io.read_raw_edf(fn[0], preload=True)
+    mne.datasets.eegbci.standardize(r)
+    return r
+
+
+def _pick_channels(pool, available, channels):
+    """First `channels` of the preferred pool that actually exist in the data."""
+    present = [c for c in pool if c in available]
+    return present[:max(1, int(channels))]
+
+
+def load_alpha(channels=6, clip=2.0):
+    """Real EEG — eyes OPEN (run 1) vs CLOSED (run 2). Alpha waves grow when the
+    eyes close, over the occipital channels. Classes and sampling rate are fixed;
+    you choose how many channels and the clip length."""
+    runs = [(1, 0), (2, 1)]                        # (run, label): open=0, closed=1
+    loaded = [(lab, _eegbci_run(run)) for run, lab in runs]
+    sfreq = float(loaded[0][1].info["sfreq"])
+    ch = _pick_channels(ALPHA_POOL, loaded[0][1].ch_names, channels)
+    n = int(clip * sfreq)
+    X, y = [], []
+    for lab, r in loaded:                          # cut each recording into clips
+        d = r.copy().pick(ch).get_data() * 1e6     # volts → µV
+        for i in range(d.shape[1] // n):
+            X.append(d[:, i * n:(i + 1) * n])
+            y.append(lab)
+    return (np.stack(X).astype("float32"), np.array(y, "int64"),
+            ["eyes open", "eyes closed"], sfreq, list(ch))
+
+
+def load_motor(channels=3, clip=2.0):
+    """Real EEG — imagine moving the LEFT vs RIGHT hand (motor cortex). Classes
+    and sampling rate are fixed; you choose how many channels and the clip
+    length. The hardest task here."""
+    raw = mne.concatenate_raws([_eegbci_run(r) for r in (4, 8, 12)])
+    sfreq = float(raw.info["sfreq"])
+    ch = _pick_channels(MOTOR_POOL, raw.ch_names, channels)
+    raw.pick(ch)
     events, eid = mne.events_from_annotations(raw)
     ep = mne.Epochs(raw, events, {k: eid[k] for k in ("T1", "T2")},
-                    tmin=0.0, tmax=clip - 1 / raw.info["sfreq"],
-                    baseline=None, preload=True)
+                    tmin=0.0, tmax=clip - 1 / sfreq, baseline=None, preload=True)
     X = (ep.get_data() * 1e6).astype("float32")
     y = (ep.events[:, -1] == eid["T2"]).astype("int64")
-    return X, y, ["left hand", "right hand"], float(raw.info["sfreq"])
+    return X, y, ["left hand", "right hand"], sfreq, list(ch)
 
 
 def load_npz(path):
     d = np.load(path, allow_pickle=True)
+    X = d["X"].astype("float32")
     sfreq = float(d["sfreq"]) if "sfreq" in d else 0.0
-    return (d["X"].astype("float32"), d["y"].astype("int64"),
-            list(d["classes"]), sfreq)
+    ch_names = list(d["ch_names"]) if "ch_names" in d else \
+        [f"ch{i+1}" for i in range(X.shape[1])]
+    return X, d["y"].astype("int64"), list(d["classes"]), sfreq, ch_names
 
 
 def get_data(source, **params):
-    """Dispatch to a loader by name. Extra params are passed through."""
+    """Dispatch to a loader by name. Extra params are passed through.
+    Returns (X, y, class_names, sfreq, ch_names)."""
     if source == "synthetic":
         return load_synthetic(**params)
-    if source == "eegbci":
-        return load_eegbci(**params)
+    if source == "alpha":
+        return load_alpha(**params)
+    if source in ("motor", "eegbci"):    # "eegbci" kept as an alias for motor
+        return load_motor(**params)
     if source == "npz":
         return load_npz(params["path"])
     raise ValueError(f"unknown source: {source}")
@@ -173,8 +242,10 @@ def train_model(X, y, classes, model="shallow", epochs=25, lr=6.25e-4,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", choices=["synthetic", "eegbci", "npz"],
-                    default="eegbci")
+    ap.add_argument("--source",
+                    choices=["synthetic", "alpha", "motor", "eegbci", "npz"],
+                    default="motor",
+                    help="eegbci is an alias for motor (imagine left/right hand)")
     ap.add_argument("--npz", help="path to a .npz from ironbci32_stream.py")
     ap.add_argument("--model", choices=list(MODELS), default="shallow")
     ap.add_argument("--epochs", type=int, default=25)
@@ -191,12 +262,12 @@ def main():
     if args.source == "npz":
         if not args.npz:
             ap.error("--source npz requires --npz PATH")
-        X, y, classes, sfreq = load_npz(args.npz)
+        X, y, classes, sfreq, _ = load_npz(args.npz)
     elif args.source == "synthetic":
-        X, y, classes, sfreq = load_synthetic()
+        X, y, classes, sfreq, _ = load_synthetic()
     else:
-        print("Loading public motor-imagery EEG (first run downloads a sample)…")
-        X, y, classes, sfreq = load_eegbci()
+        print("Loading public EEG (first run downloads a sample)…")
+        X, y, classes, sfreq, _ = get_data(args.source)
 
     print(f"data X={X.shape}  classes={classes}  "
           f"chance={100/len(classes):.0f}%  sfreq={sfreq:.0f}Hz")

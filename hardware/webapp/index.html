@@ -46,6 +46,13 @@
          border:1px solid var(--line); margin-top:6px; }
   .bar > i { display:block; height:100%; background:var(--good); }
   svg { max-width:100%; height:auto; margin-top:8px; }
+  .subh { font-size:15px; margin:18px 0 4px; color:var(--ink); font-weight:700; }
+  .note { color:var(--mut); font-size:13.5px; margin:4px 0 8px; }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px;
+          background:#10142a; border:1px solid var(--line); border-radius:8px;
+          padding:7px 10px; margin:5px 0; overflow-x:auto; white-space:nowrap; }
+  .mono .k { color:var(--acc); font-weight:700; }
+  table td.lh, table th.lh { text-align:left; color:var(--acc); }
 </style>
 </head>
 <body>
@@ -65,12 +72,24 @@
     <div class="step">Step 2 · Adjust what you're allowed to</div>
     <p class="blurb">Only the settings the dataset's creators left open show up here.</p>
     <div class="grid" id="params"></div>
+    <p class="muted" id="ds-fixed" style="margin-top:8px"></p>
     <button id="view">👁  View the data</button>
     <div id="preview" class="hidden" style="margin-top:14px">
       <div id="shape"></div>
       <div id="classes" style="margin:8px 0"></div>
-      <div class="scroll"><table id="table"></table></div>
-      <p class="muted">Showing trial&nbsp;1 · up to 8 channels × 12 time-samples · values are microvolts (µV).</p>
+
+      <div class="subh">Raw data — one clip, up close</div>
+      <p class="note" id="rawnote"></p>
+      <div class="scroll"><table id="rawtable"></table></div>
+      <p class="muted" id="rawcap"></p>
+
+      <div class="subh">The pipeline — stack every clip into X and y</div>
+      <p class="note" id="tensornote"></p>
+      <div class="mono" id="xshape"></div>
+      <div class="mono" id="yhead"></div>
+      <div class="mono" id="clsmap"></div>
+      <div class="scroll"><table id="tensortable"></table></div>
+      <p class="muted" id="tensorcap"></p>
     </div>
   </div>
 
@@ -99,6 +118,7 @@
     <div id="result" class="hidden" style="margin-top:12px">
       <div class="big"><span id="acc" class="good"></span> <span class="muted" id="chance"></span></div>
       <div class="bar"><i id="accbar"></i></div>
+      <p id="verdict" style="margin:8px 0 2px"></p>
       <p class="muted" id="rmeta"></p>
       <svg id="loss" viewBox="0 0 320 90" class="hidden"></svg>
       <p class="muted hidden" id="losscap">Training loss should trend downward as the model learns.</p>
@@ -139,6 +159,7 @@ function renderParams() {
              min="${p.min}" max="${p.max}" step="${p.step}">`;
     $('params').appendChild(wrap);
   }
+  $('ds-fixed').textContent = ds.fixed || '';
   $('preview').classList.add('hidden');
 }
 
@@ -147,6 +168,19 @@ function collectParams() {
   const out = {};
   for (const p of ds.params) out[p.name] = $('p_' + p.name).value;
   return out;
+}
+
+// Build a table: a header row of `headers`, then `rows`. The first `nLeft`
+// columns are left-aligned index columns (Time / Trial / Sample); the rest are
+// right-aligned numbers.
+function renderTable(id, headers, rows, nLeft) {
+  let h = '<tr>' + headers
+    .map((c, i) => `<th class="${i < nLeft ? 'lh' : ''}">${c}</th>`).join('') + '</tr>';
+  for (const row of rows) {
+    h += '<tr>' + row
+      .map((v, i) => `<td class="${i < nLeft ? 'lh' : ''}">${v}</td>`).join('') + '</tr>';
+  }
+  $(id).innerHTML = h;
 }
 
 $('view').onclick = async () => {
@@ -161,12 +195,37 @@ $('view').onclick = async () => {
     $('classes').innerHTML = 'Classes: ' + Object.entries(d.counts)
       .map(([c, n]) => `<span class="pill">${c} · ${n}</span>`).join('') +
       ` <span class="muted">(chance = ${d.chance.toFixed(0)}%)</span>`;
-    let h = '<tr><th></th>' + d.col_labels.map(c => `<th>${c}</th>`).join('') + '</tr>';
-    d.table.forEach((row, i) => {
-      h += `<tr><td class="rowh">${d.row_labels[i]}</td>` +
-        row.map(v => `<td>${v}</td>`).join('') + '</tr>';
-    });
-    $('table').innerHTML = h;
+
+    // Raw data — one clip (Colab "Explore the data"): rows = moments in time.
+    const hz = d.sfreq ? d.sfreq.toFixed(0) : '—';
+    $('rawnote').innerHTML =
+      'Each <b>column is one channel</b> (one electrode on the head). Each ' +
+      `<b>row is one moment in time</b> (one sample — at ${hz} Hz there are ${hz} ` +
+      'rows per second). Each <b>number is a voltage</b> in microvolts (µV) — the ' +
+      'tiny brain signal at that spot and moment.';
+    renderTable('rawtable',
+      ['Time (ms)', ...d.raw.ch_names.map(c => `${c} (µV)`)], d.raw.rows, 1);
+    $('rawcap').textContent =
+      `Showing clip 1 · first ${d.raw.n_show} of ${d.raw.n_total} samples` +
+      (d.channels > d.ch_show ? ` · first ${d.ch_show} of ${d.channels} channels` : '');
+
+    // Pipeline tensor — stack epochs into X and y (Colab Train, Step 2).
+    $('tensornote').innerHTML =
+      'A <b>dataset</b> is a stack of <b>epochs</b> — equal-length, labeled clips. ' +
+      'Each epoch is a grid of <b>channels × samples</b> and carries one <b>class</b>. ' +
+      'Stacking them all gives <b>X</b> and <b>y</b>:';
+    $('xshape').innerHTML =
+      `<span class="k">X</span>  (trials, channels, time) = <b>(${d.trials}, ${d.channels}, ${d.n_times})</b>`;
+    $('yhead').innerHTML =
+      `<span class="k">y</span>  one label per clip = [ ${d.tensor.y_head.join(', ')}, … ]`;
+    $('clsmap').innerHTML = '<span class="k">classes</span>:  ' +
+      d.classes.map((c, i) => `${i} = ${c}`).join('  ·  ');
+    renderTable('tensortable',
+      ['Trial (epoch)', 'Sample', 'Time (ms)', ...d.tensor.ch_names.map(c => `${c} (µV)`)],
+      d.tensor.rows, 3);
+    $('tensorcap').textContent =
+      `First ${d.tensor.n_show} of ${d.tensor.n_total.toLocaleString()} (trials × samples) rows.`;
+
     $('preview').classList.remove('hidden');
   } catch (e) { alert(e.message); }
   $('view').disabled = false; $('view').textContent = '👁  View the data';
@@ -186,6 +245,9 @@ $('train').onclick = async () => {
     $('acc').textContent = r.accuracy_pct + '%';
     $('chance').textContent = ` test accuracy  ·  chance = ${r.chance_pct}%`;
     $('accbar').style.width = Math.min(100, r.accuracy_pct) + '%';
+    const learned = r.accuracy_pct >= r.chance_pct + 5;
+    $('verdict').textContent = r.verdict || '';
+    $('verdict').className = learned ? 'good' : 'muted';
     $('rmeta').textContent =
       `${r.model} · trained on ${r.n_train} clips, tested on ${r.n_test} · ` +
       `${r.n_chans} channels × ${r.n_times} samples · ran on ${r.device.toUpperCase()}` +
