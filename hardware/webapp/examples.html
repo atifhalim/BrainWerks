@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BrainWerks · Examples</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<nav class="nav">
+  <span class="brand">🧠 BrainWerks</span>
+  <a href="/examples" class="active">Examples</a>
+  <a href="/tutorial1">Tutorial #1</a>
+  <a href="/tutorial2">Basic Brain Decoding</a>
+</nav>
+<header>
+  <h1>Examples</h1>
+  <p>Hands-on EEG decoding, running on your Jetson. Pick an example to start.</p>
+</header>
+<main id="list">
+  <p class="muted">Loading examples…</p>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+async function boot() {
+  const cfg = await (await fetch('/api/config')).json();
+  const html = cfg.examples.map(ex => `
+    <a class="card example-card" href="/${ex.slug}">
+      <h2>${ex.title}</h2>
+      <p class="blurb">${ex.summary}</p>
+      <div class="go">Open example →</div>
+    </a>`).join('');
+  $('list').innerHTML = html;
+}
+boot();
+</script>
+</body>
+</html>

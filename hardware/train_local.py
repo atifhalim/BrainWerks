@@ -3,10 +3,12 @@
 train_local.py — train a braindecode model locally (Jetson or any computer).
 
 Data sources:
-  --source synthetic  Fake but learnable EEG-shaped data. Instant, no download,
-                      no network — great for a first run and for the web app.
-  --source eegbci     Public motor-imagery EEG (downloads via MNE). Real data,
-                      no hardware — confirms your full training setup.
+  --source synthetic  Fake EEG-shaped data. Instant, no download, no network.
+  --source alpha      Real EEG: eyes open vs closed (PhysioNet EEGBCI, via MNE).
+  --source motor      Real EEG: imagine left vs right hand (EEGBCI). "eegbci" is
+                      kept as an alias for this.
+  --source bcic2a     BCI Competition IV 2a: 4-class motor imagery, 22 channels
+                      (MOABB 'BNCI2014_001'). Needs `moabb` installed.
   --source npz PATH   Your own recording saved by ironbci32_stream.py.
 
 Only needs: braindecode, mne, scikit-learn (which pull in torch + skorch).
@@ -146,6 +148,46 @@ def load_motor(channels=3, clip=2.0):
     return X, y, ["left hand", "right hand"], sfreq, list(ch)
 
 
+def load_bcic2a(subject=3):
+    """BCI Competition IV 2a — MOABB 'BNCI2014_001'. 4-class motor imagery
+    (left hand, right hand, feet, tongue), 22 EEG channels @ 250 Hz, one subject
+    (1-9). Mirrors braindecode's 'plot_bcic_iv_2a_moabb_trial' pipeline:
+
+      pick EEG → V to µV → band-pass 4-38 Hz → exponential moving
+      standardization → cut trial windows (start 0.5 s before the cue).
+
+    Returns every trial from both of the subject's sessions (the train/test
+    split by session happens at training time). Needs `moabb` installed
+    (pip install moabb) so braindecode can download and parse the recordings."""
+    from braindecode.datasets import MOABBDataset
+    from braindecode.preprocessing import (
+        Preprocessor, preprocess, exponential_moving_standardize,
+        create_windows_from_events)
+
+    subject = int(subject)
+    factor = 1e6                                     # volts → microvolts
+    dataset = MOABBDataset(dataset_name="BNCI2014_001", subject_ids=[subject])
+    preprocess(dataset, [
+        Preprocessor("pick_types", eeg=True, meg=False, stim=False),
+        Preprocessor(lambda data: np.multiply(data, factor)),
+        Preprocessor("filter", l_freq=4.0, h_freq=38.0),
+        Preprocessor(exponential_moving_standardize,
+                     factor_new=1e-3, init_block_size=1000),
+    ])
+    sfreq = float(dataset.datasets[0].raw.info["sfreq"])
+    # Channel names come from the preprocessed raw (22 EEG channels) — windowing
+    # keeps channels, and this is stable across braindecode versions.
+    ch_names = list(dataset.datasets[0].raw.ch_names)
+    trial_start_offset_samples = int(-0.5 * sfreq)   # 0.5 s before the cue
+    windows = create_windows_from_events(
+        dataset, trial_start_offset_samples=trial_start_offset_samples,
+        trial_stop_offset_samples=0, preload=True)
+    X = np.stack([w[0] for w in windows]).astype("float32")
+    y = np.array([int(w[1]) for w in windows], dtype="int64")
+    classes = ["left hand", "right hand", "feet", "tongue"]
+    return X, y, classes, sfreq, ch_names
+
+
 def load_npz(path):
     d = np.load(path, allow_pickle=True)
     X = d["X"].astype("float32")
@@ -164,6 +206,8 @@ def get_data(source, **params):
         return load_alpha(**params)
     if source in ("motor", "eegbci"):    # "eegbci" kept as an alias for motor
         return load_motor(**params)
+    if source == "bcic2a":
+        return load_bcic2a(**params)
     if source == "npz":
         return load_npz(params["path"])
     raise ValueError(f"unknown source: {source}")
