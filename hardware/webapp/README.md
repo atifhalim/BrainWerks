@@ -1,14 +1,34 @@
-# BrainWerks Tutorial #1 — web app (runs on your Jetson)
+# BrainWerks — Examples web app (runs on your Jetson)
 
-The same workflow as the Colab notebook, but the **runtime is your Jetson**:
-
-1. **Pick a dataset** 2. **View the raw data** 3. **Adjust the open parameters**
-4. **Pick a model** 5. **Train** 6. **Read the test accuracy**
-
+A small multi-page site of hands-on EEG examples, all under one **Examples** tab.
 It's deliberately bare-bones and uses **only Python's standard library** for the
 web server — no Flask, no Node/npm, nothing extra to install. It imports the
 training code from `../train_local.py`, so the website and the command line run
 the **exact same** braindecode pipeline.
+
+## Examples
+
+| Page | What it is |
+|---|---|
+| **Tutorial #1 — See & Train on EEG** (`/tutorial1`) | The Colab workflow on your Jetson: pick a dataset (synthetic / eyes-open-vs-closed / left-vs-right hand) → view the raw data → pick a model → train → read the accuracy. |
+| **Basic Brain Decoding on EEG Data** (`/tutorial2`) | The **BCI Competition IV 2a** benchmark (`BNCI2014_001`): 4-class motor imagery, 22 channels. Detailed dataset write-up + an *explore the data* view (raw trial + `X`/`y` tensor). Training comes in a later step. |
+
+The landing page (`/`) lists every example. Each page reuses the shared
+`app.js` / `app.css`; the dataset and model dropdowns are driven by the catalog
+in `server.py`, so adding a dataset/model to that catalog makes it show up.
+
+### Tutorial #2 needs `moabb`
+
+The BCI IV 2a dataset is downloaded and parsed through MOABB, which isn't in the
+base Jetson image. Install it once in the container:
+
+```bash
+pip install moabb
+```
+
+The **first** time you pick a subject it downloads that subject's recordings
+(hundreds of MB) and preprocesses them, so the first "View the data" can take a
+minute or two; later loads are cached.
 
 ## Run it
 

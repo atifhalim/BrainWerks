@@ -86,7 +86,40 @@ DATASETS = {
              "default": 2.0, "min": 2.0, "max": 4.0,  "step": 0.5},
         ],
     },
+    # Tutorial #2 — the BCI Competition IV 2a benchmark. Everything about the
+    # recording is fixed by the experiment; the only thing you pick is which of
+    # the 9 subjects to load. Needs `moabb` installed in the container.
+    "bcic2a": {
+        "label": "BCI Competition IV 2a — 4-class motor imagery",
+        "blurb": "Real EEG from the reference motor-imagery benchmark "
+                 "(MOABB 'BNCI2014_001'). One subject imagines LEFT hand, RIGHT "
+                 "hand, both FEET, or TONGUE — 22 channels at 250 Hz, band-passed "
+                 "4–38 Hz and standardized, cut into 4.5 s trials. Pick which of "
+                 "the 9 subjects to explore.",
+        "fixed": "Fixed by the experiment: 4 classes, 22 EEG channels, 250 Hz, "
+                 "1125 samples (4.5 s) per trial. Needs `moabb`; first load "
+                 "downloads the subject (hundreds of MB).",
+        "params": [
+            {"name": "subject", "label": "Subject (1–9)", "type": "int",
+             "default": 3, "min": 1, "max": 9, "step": 1},
+        ],
+    },
 }
+
+# The website groups examples under one "Examples" tab. Each example is one page
+# that reuses the same dataset/model machinery, showing only its own datasets.
+EXAMPLES = [
+    {"slug": "tutorial1", "page": "tutorial1.html",
+     "title": "Tutorial #1 — See & Train on EEG",
+     "summary": "Synthetic vs real EEG: view the raw data, train a model, read "
+                "the accuracy. Start here.",
+     "datasets": ["synthetic", "alpha", "motor"]},
+    {"slug": "tutorial2", "page": "tutorial2.html",
+     "title": "Tutorial #2 — Basic Brain Decoding on EEG Data",
+     "summary": "The BCI Competition IV 2a benchmark — 4-class motor imagery, "
+                "22 channels. Explore the dataset in detail.",
+     "datasets": ["bcic2a"]},
+]
 
 MODELS = [
     {"name": "shallow", "label": "ShallowFBCSPNet — small & fast (good default)"},
@@ -107,14 +140,24 @@ def coerce(dataset, raw):
     return out
 
 
+_cache = {}          # tiny load cache: {key -> (X, y, classes, sfreq, ch_names)}
+_CACHE_MAX = 2       # keep the last couple of loads (real datasets are heavy)
+
+
 def _load(dataset, body):
     """Load a dataset for preview or training, with matching params so both see
     the same data. The web app's synthetic is the Colab kind: random, no pattern.
-    Returns (X, y, class_names, sfreq, ch_names)."""
+    Cached so a heavy dataset (e.g. BCIC IV 2a) is not reloaded between the
+    'view' and 'train' clicks. Returns (X, y, class_names, sfreq, ch_names)."""
     params = coerce(dataset, body.get("params", {}))
     if dataset == "synthetic":
         params.setdefault("pattern", False)
-    return tl.get_data(dataset, **params)
+    key = (dataset, tuple(sorted(params.items())))
+    if key not in _cache:
+        if len(_cache) >= _CACHE_MAX:
+            _cache.pop(next(iter(_cache)))       # evict the oldest entry
+        _cache[key] = tl.get_data(dataset, **params)
+    return _cache[key]
 
 
 # How much of the (potentially huge) data to ship to the page.
@@ -208,12 +251,28 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_file(self, name, ctype):
+        path = os.path.join(HERE, name)
+        if not os.path.isfile(path):
+            return self._send(404, {"error": "not found"})
+        with open(path, "rb") as f:
+            self._send(200, f.read(), ctype)
+
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
-            with open(os.path.join(HERE, "index.html"), "rb") as f:
-                self._send(200, f.read(), "text/html; charset=utf-8")
-        elif self.path == "/api/config":
+        path = self.path.split("?", 1)[0]
+        pages = {"/": "examples.html", "/index.html": "examples.html",
+                 "/examples": "examples.html"}
+        for ex in EXAMPLES:                       # /tutorial1, /tutorial2, …
+            pages[f"/{ex['slug']}"] = ex["page"]
+        if path in pages:
+            self._send_file(pages[path], "text/html; charset=utf-8")
+        elif path == "/app.js":
+            self._send_file("app.js", "application/javascript; charset=utf-8")
+        elif path == "/app.css":
+            self._send_file("app.css", "text/css; charset=utf-8")
+        elif path == "/api/config":
             self._send(200, {"datasets": DATASETS, "models": MODELS,
+                             "examples": EXAMPLES,
                              "cuda": tl.torch.cuda.is_available()})
         else:
             self._send(404, {"error": "not found"})
@@ -236,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    print("BrainWerks Tutorial #1 web app")
+    print("BrainWerks — Examples web app")
     print(f"  open  http://localhost:{PORT}   (or http://<jetson-ip>:{PORT} "
           f"from another computer)")
     print(f"  GPU visible to PyTorch: {tl.torch.cuda.is_available()}   "

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BrainWerks · Tutorial #1</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<nav class="nav">
+  <span class="brand">🧠 BrainWerks</span>
+  <a href="/">Tutorial</a>
+  <a href="/tutorial1" class="active">Tutorial #1</a>
+  <a href="/tutorial2">Tutorial #2</a>
+</nav>
+<header>
+  <h1>Tutorial&nbsp;#1 — See &amp; Train on EEG</h1>
+  <p>Load a dataset, look at the raw brain data, pick a model, and train it — right here on your own hardware.</p>
+</header>
+<main>
+
+  <div class="card">
+    <div class="step">Step 1 · Pick a dataset</div>
+    <select id="dataset"></select>
+    <p class="blurb" id="ds-blurb"></p>
+  </div>
+
+  <div class="card">
+    <div class="step">Step 2 · Adjust what you're allowed to</div>
+    <p class="blurb">Only the settings the dataset's creators left open show up here.</p>
+    <div class="grid" id="params"></div>
+    <p class="muted" id="ds-fixed" style="margin-top:8px"></p>
+    <button id="view">👁  View the data</button>
+    <div id="preview" class="hidden" style="margin-top:14px">
+      <div id="shape"></div>
+      <div id="classes" style="margin:8px 0"></div>
+
+      <div class="subh">Raw data — one clip, up close</div>
+      <p class="note" id="rawnote"></p>
+      <div class="scroll"><table id="rawtable"></table></div>
+      <p class="muted" id="rawcap"></p>
+
+      <div class="subh">The pipeline — stack every clip into X and y</div>
+      <p class="note" id="tensornote"></p>
+      <div class="mono" id="xshape"></div>
+      <div class="mono" id="yhead"></div>
+      <div class="mono" id="clsmap"></div>
+      <div class="scroll"><table id="tensortable"></table></div>
+      <p class="muted" id="tensorcap"></p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="step">Step 3 · Pick a model &amp; settings</div>
+    <label>Model</label>
+    <select id="model"></select>
+    <div class="grid">
+      <div><label>Training passes (epochs)</label><input id="epochs" type="number" value="25" min="1" max="200"></div>
+      <div><label>Batch size</label><input id="batch" type="number" value="16" min="2" max="128"></div>
+      <div><label>Learning rate</label><input id="lr" type="number" value="0.000625" step="0.000125"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="step">Step 4 · Train &amp; see the accuracy</div>
+    <label>Run on</label>
+    <select id="device">
+      <option value="auto">Auto — use the GPU when it fits, CPU otherwise (recommended)</option>
+      <option value="cuda">GPU</option>
+      <option value="cpu">CPU</option>
+    </select>
+    <p class="blurb" id="dev-note"></p>
+    <button id="train">🚀  Train the model</button>
+    <div id="status" class="muted" style="margin-top:12px"></div>
+    <div id="result" class="hidden" style="margin-top:12px">
+      <div class="big"><span id="acc" class="good"></span> <span class="muted" id="chance"></span></div>
+      <div class="bar"><i id="accbar"></i></div>
+      <p id="verdict" style="margin:8px 0 2px"></p>
+      <p class="muted" id="rmeta"></p>
+      <svg id="loss" viewBox="0 0 320 90" class="hidden"></svg>
+      <p class="muted hidden" id="losscap">Training loss should trend downward as the model learns.</p>
+    </div>
+  </div>
+
+</main>
+<script>window.PAGE = { datasets: ['synthetic', 'alpha', 'motor'], training: true };</script>
+<script src="/app.js"></script>
+</body>
+</html>
