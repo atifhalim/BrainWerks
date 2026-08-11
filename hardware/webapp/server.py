@@ -115,7 +115,7 @@ EXAMPLES = [
                 "the accuracy. Start here.",
      "datasets": ["synthetic", "alpha", "motor"]},
     {"slug": "tutorial2", "page": "tutorial2.html",
-     "title": "Basic Brain Decoding on EEG Data",
+     "title": "Tutorial #2 — Basic Brain Decoding on EEG Data",
      "summary": "The BCI Competition IV 2a benchmark — 4-class motor imagery, "
                 "22 channels. Explore the dataset in detail.",
      "datasets": ["bcic2a"]},
