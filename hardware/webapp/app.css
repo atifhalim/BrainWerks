@@ -78,3 +78,6 @@ details.card > summary { cursor:pointer; font-weight:700; color:var(--acc);
 .example-card:hover { border-color:var(--acc); }
 .example-card h2 { margin:0 0 6px; font-size:18px; color:var(--ink); }
 .example-card .go { color:var(--acc); font-size:13px; margin-top:8px; }
+.parthead { font-size:17px; font-weight:800; margin:26px 2px 2px;
+            padding-bottom:6px; border-bottom:2px solid var(--acc); color:var(--ink); }
+.parthead .n { color:var(--acc); }

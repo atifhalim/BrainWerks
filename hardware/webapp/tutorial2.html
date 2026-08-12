@@ -15,22 +15,33 @@
 </nav>
 <header>
   <h1>Tutorial&nbsp;#2 — Basic Brain Decoding on EEG Data</h1>
-  <p>Decoding four imagined movements from the BCI&nbsp;Competition&nbsp;IV&nbsp;2a benchmark — the reference dataset for motor-imagery BCIs. This first step is all about <b>understanding the data</b>.</p>
+  <p>Train and test a deep-learning model on EEG in the classic setup: trials of brain data, each with a label (Left Hand, Right Hand, Feet, Tongue). We follow the braindecode <i>BCIC IV 2a</i> example end to end, and explain every step.</p>
 </header>
 <main>
 
-  <!-- ---------- detailed dataset write-up ---------- -->
+  <!-- ============ the road map ============ -->
   <div class="card doc">
-    <div class="step">About the dataset · BCI Competition IV 2a</div>
-    <p><b>What it is:</b> real EEG from 9 people who repeatedly <i>imagined</i> moving
-    one of four body parts. It was recorded to a high standard by the Graz BCI Lab
-    for the 2008 BCI&nbsp;Competition&nbsp;IV, and it is <b>the reference benchmark</b>
-    for motor-imagery decoding — when a paper says "tested on BCI&nbsp;IV&nbsp;2a," this
-    is it. In MOABB/braindecode it loads under the id <code>BNCI2014_001</code>.</p>
+    <div class="step">What this tutorial covers</div>
+    <p>Decoding EEG is a pipeline. We walk it one stage at a time, and you run each
+    stage yourself:</p>
+    <ul>
+      <li><b>Part 1 — Loading and preparing the data:</b> load the dataset →
+      preprocess it → cut it into labeled windows → split into training and test.</li>
+      <li><b>Part 2 — Creating a model:</b> pick a deep network sized to the data.</li>
+      <li><b>Part 3 — Model training</b> (and training for longer).</li>
+      <li><b>Part 4 — Plot the training curves.</b></li>
+      <li><b>Part 5 — Plot a confusion matrix</b> to see <i>which</i> movements it confuses.</li>
+    </ul>
+  </div>
 
-    <h3>The task — four imagined movements</h3>
-    <p>Each trial, the person imagines one movement without actually moving. Four
-    classes means <b>chance = 25%</b>.</p>
+  <!-- ============ dataset background ============ -->
+  <details class="card doc">
+    <summary>About the dataset · BCI Competition IV 2a</summary>
+    <p style="margin-top:10px"><b>What it is:</b> real EEG from 9 people who repeatedly
+    <i>imagined</i> moving one of four body parts. Recorded by the Graz BCI Lab for the
+    2008 BCI&nbsp;Competition&nbsp;IV, it is <b>the reference benchmark</b> for
+    motor-imagery decoding. In MOABB/braindecode it loads under the id
+    <code>BNCI2014_001</code>.</p>
     <div class="scroll"><table>
       <tr><th>Label</th><th>Imagined movement</th></tr>
       <tr><td>0</td><td>Left hand</td></tr>
@@ -38,77 +49,83 @@
       <tr><td>2</td><td>Both feet</td></tr>
       <tr><td>3</td><td>Tongue</td></tr>
     </table></div>
-
-    <h3>Who and how much</h3>
     <ul>
-      <li><b>9 subjects</b> (A01–A09), all healthy.</li>
-      <li><b>2 sessions per subject</b>, recorded on <b>different days</b> — one for
-      training (<code>0train</code>), one for testing (<code>1test</code>). Training on
-      one day and testing on another is what makes the benchmark honest and hard: the
-      model must generalize across sessions.</li>
-      <li><b>288 trials per session</b>, <b>72 per class</b>, in random order.</li>
+      <li><b>9 subjects</b>, each recorded in <b>2 sessions on different days</b> —
+      one for training, one for testing.</li>
+      <li><b>288 trials per session</b>, <b>72 per class</b>.</li>
+      <li><b>22 EEG electrodes</b> over sensorimotor cortex, <b>250 Hz</b> (4 ms/sample).</li>
+      <li>Each ~7.5 s trial: a cue at t = 2 s tells the person which movement to imagine;
+      they sustain it until t = 6 s.</li>
     </ul>
+    <div class="callout"><b>Jetson note:</b> the first time you pick a subject the data
+    <b>downloads (hundreds of MB)</b> and is preprocessed, so the first load takes a minute
+    or two. Needs <code>moabb</code> in the container (<code>pip install moabb</code>).</div>
+  </details>
 
-    <h3>The recording setup</h3>
-    <ul>
-      <li><b>22 EEG electrodes</b> over sensorimotor cortex (10–20 layout), plus 3 EOG
-      (eye) channels that are dropped before decoding.</li>
-      <li><b>250 Hz</b> sampling → <b>4 ms per sample</b>.</li>
-      <li>Hardware band-pass 0.5–100 Hz and a 50 Hz notch at recording time.</li>
-    </ul>
+  <!-- ============ PART 1 ============ -->
+  <div class="parthead"><span class="n">Part 1</span> · Loading and preparing the data</div>
 
-    <h3>The trial timing (Graz paradigm)</h3>
-    <p>Each ~7.5 s trial: a fixation cross and beep at <b>t = 0</b>; at <b>t = 2 s</b> an
-    arrow cue shows which movement to imagine; the person sustains the imagery until
-    <b>t = 6 s</b>; then a short rest. The cue is the label.</p>
-
-    <h3>From raw signal to a trainable dataset</h3>
-    <p>This example reproduces the braindecode pipeline. For each subject it:</p>
-    <ul>
-      <li>keeps the 22 EEG channels and converts <b>volts → µV</b>,</li>
-      <li><b>band-passes 4–38 Hz</b> (the motor-imagery band),</li>
-      <li>applies <b>exponential moving standardization</b> so each channel is normalized on the fly,</li>
-      <li>cuts <b>trial windows</b> starting 0.5 s before the cue → each window is
-      <b>1125 samples = 4.5 s</b>, shape <b>[22 channels × 1125 samples]</b>, one of 4 labels.</li>
-    </ul>
-    <p>A full run of the reference model (ShallowFBCSPNet) reaches <b>~68% accuracy</b>
-    on the held-out session for a single subject — vs 25% chance. That known target is
-    part of why this dataset is so useful: you can tell whether your run is working.</p>
-
-    <div class="callout"><b>Heads-up for the Jetson:</b> unlike Tutorial&nbsp;#1's tiny
-    sample, the first time you pick a subject the data <b>downloads (hundreds of MB)</b>,
-    and 22×1125 windows are much heavier to train — this is where the GPU earns its keep.
-    The dataset needs <code>moabb</code> installed in the container
-    (<code>pip install moabb</code>).</div>
-  </div>
-
-  <!-- ---------- Step 1: dataset ---------- -->
+  <!-- 1 · Loading the dataset -->
   <div class="card">
-    <div class="step">Step 1 · The dataset</div>
+    <div class="step">Step 1 · Loading the dataset</div>
+    <p class="blurb">braindecode wraps <b>MOABB</b> — a library that knows how to
+    download and read dozens of public EEG datasets — in a <code>MOABBDataset</code>.
+    We ask it for <code>BNCI2014_001</code>, one subject at a time. That gives us the
+    subject's two continuous recordings (train day + test day), still raw.</p>
     <select id="dataset"></select>
     <p class="blurb" id="ds-blurb"></p>
-  </div>
-
-  <!-- ---------- Step 2: explore ---------- -->
-  <div class="card">
-    <div class="step">Step 2 · Explore the data</div>
-    <p class="blurb">The only thing the experiment leaves open is <b>which subject</b>
-    to load — everything else is fixed by the recording.</p>
+    <label>Which subject to load</label>
     <div class="grid" id="params"></div>
     <p class="muted" id="ds-fixed" style="margin-top:8px"></p>
-    <button id="view">👁  View the data</button>
-    <p class="muted" style="margin-top:6px">First load downloads the subject and can
-    take a minute or two.</p>
+    <p class="blurb">Everything else about the recording is fixed by the experiment —
+    the only choice you have is <b>which of the 9 people</b> to decode.</p>
+  </div>
+
+  <!-- 2 · Preprocessing -->
+  <div class="card doc">
+    <div class="step">Step 2 · Preprocessing</div>
+    <p>Raw EEG is messy. Before a model sees it, we clean and normalize it — the
+    <b>exact four steps</b> from the braindecode example, applied to the continuous
+    signal:</p>
+    <ul>
+      <li><b>Keep only the EEG channels.</b> The recording also has EOG (eye-movement)
+      sensors; those aren't brain signal, so we drop them, leaving the 22 EEG channels.</li>
+      <li><b>Convert volts → microvolts</b> (×1,000,000). EEG is tiny; working in µV keeps
+      the numbers in a friendly range.</li>
+      <li><b>Band-pass filter 4–38 Hz.</b> Motor imagery lives in the mu (~8–12 Hz) and
+      beta (~13–30 Hz) rhythms. Filtering to 4–38 Hz keeps those and throws away slow
+      drifts and high-frequency noise.</li>
+      <li><b>Exponential moving standardization.</b> Each channel is continuously
+      re-centered and re-scaled as the recording plays, so no channel dominates just
+      because it happens to have a bigger amplitude. (Parameters from the example:
+      <code>factor_new = 1e-3</code>, <code>init_block_size = 1000</code>.)</li>
+    </ul>
+    <p class="muted">This runs automatically when you load a subject — the numbers you
+    see in Step&nbsp;3 are already preprocessed.</p>
+  </div>
+
+  <!-- 3 · Extracting compute windows -->
+  <div class="card">
+    <div class="step">Step 3 · Extracting compute windows</div>
+    <p class="blurb">A model can't train on one long recording — it needs many short,
+    equal-length, labeled examples. So we cut the signal into <b>trial windows</b>: one
+    window per cue, starting <b>0.5 s before</b> the cue and running <b>4.5 s</b>
+    (1,125 samples) — using braindecode's <code>create_windows_from_events</code>. Each
+    window is a grid of <b>22 channels × 1,125 samples</b> with one of the 4 labels.
+    Stack them and you get <b>X</b> (the clips) and <b>y</b> (the labels).</p>
+    <button id="view">👁  View the windows</button>
+    <p class="muted" style="margin-top:6px">First load downloads the subject and can take
+    a minute or two.</p>
     <div id="preview" class="hidden" style="margin-top:14px">
       <div id="shape"></div>
       <div id="classes" style="margin:8px 0"></div>
 
-      <div class="subh">Raw data — one trial, up close</div>
+      <div class="subh">One window, up close</div>
       <p class="note" id="rawnote"></p>
       <div class="scroll"><table id="rawtable"></table></div>
       <p class="muted" id="rawcap"></p>
 
-      <div class="subh">The pipeline — stack every trial into X and y</div>
+      <div class="subh">The stack — X and y</div>
       <p class="note" id="tensornote"></p>
       <div class="mono" id="xshape"></div>
       <div class="mono" id="yhead"></div>
@@ -118,14 +135,105 @@
     </div>
   </div>
 
+  <!-- 4 · Splitting into training and validation -->
+  <div class="card doc">
+    <div class="step">Step 4 · Splitting into training and test sets</div>
+    <p>To measure learning honestly, the model must be scored on data it never trained
+    on. BCI&nbsp;IV&nbsp;2a makes this easy and strict: it was recorded on <b>two
+    different days</b>, so we simply split by session —</p>
+    <ul>
+      <li><b>Train</b> on session <code>0train</code> (288 trials, day 1).</li>
+      <li><b>Test</b> on session <code>1test</code> (288 trials, day 2), held out.</li>
+    </ul>
+    <p>Training on one day and testing on another is much harder than a random split —
+    the model has to generalize across days — which is exactly what makes this a
+    respected benchmark.</p>
+  </div>
+
+  <!-- ============ PART 2 ============ -->
+  <div class="parthead"><span class="n">Part 2</span> · Creating a model</div>
+
   <div class="card">
-    <div class="step">Next</div>
-    <p class="blurb">Training on this dataset — pick a model, run it, and compare your
-    accuracy to the ~68% reference — comes in the next step of this tutorial.</p>
+    <div class="step">Step 5 · Pick a model &amp; settings</div>
+    <p class="blurb">braindecode ships EEG-specific deep networks. The example uses
+    <b>ShallowFBCSPNet</b> — a small, fast convolutional network (~47k parameters) built
+    to mimic the classic FBCSP pipeline: it learns frequency-band filters, then how much
+    <i>power</i> each band carries, then maps that to the 4 classes. It's the recommended
+    starting point; Deep4Net is bigger and EEGNet is more compact.</p>
+    <label>Model</label>
+    <select id="model"></select>
+    <div class="grid">
+      <div><label>Training passes (epochs)</label><input id="epochs" type="number" value="30" min="1" max="200"></div>
+      <div><label>Batch size</label><input id="batch" type="number" value="64" min="2" max="128"></div>
+      <div><label>Learning rate</label><input id="lr" type="number" value="0.000625" step="0.000125"></div>
+    </div>
+    <p class="blurb">Defaults match the reference (batch 64, learning rate 0.000625).</p>
+  </div>
+
+  <!-- ============ PART 3 ============ -->
+  <div class="parthead"><span class="n">Part 3</span> · Model training</div>
+
+  <div class="card">
+    <div class="step">Step 6 · Train — and train for longer</div>
+    <p class="blurb">Training shows the model the <code>0train</code> clips over and over
+    (one <b>epoch</b> = one full pass) and nudges its weights each batch to predict the
+    labels better. Then we score it on the untouched <code>1test</code> session.
+    <b>Training for longer</b> — more epochs — is how you climb toward the paper's
+    <b>~68%</b>; a handful of epochs will land far lower. (Four classes → 25% is chance.)</p>
+    <label>Run on</label>
+    <select id="device">
+      <option value="auto">Auto — use the GPU when it fits, CPU otherwise (recommended)</option>
+      <option value="cuda">GPU</option>
+      <option value="cpu">CPU</option>
+    </select>
+    <p class="blurb" id="dev-note"></p>
+    <button id="train">🚀  Train the model</button>
+    <div id="status" class="muted" style="margin-top:12px"></div>
+    <div id="result" class="hidden" style="margin-top:12px">
+      <div class="big"><span id="acc" class="good"></span> <span class="muted" id="chance"></span></div>
+      <div class="bar"><i id="accbar"></i></div>
+      <p id="verdict" style="margin:8px 0 2px"></p>
+      <p class="muted" id="rmeta"></p>
+    </div>
+  </div>
+
+  <!-- ============ PART 4 ============ -->
+  <div class="parthead"><span class="n">Part 4</span> · Plot the training curves</div>
+
+  <div class="card">
+    <div class="step">Step 7 · Training curves</div>
+    <p class="blurb">These show <i>how</i> the run went, epoch by epoch. <b>Loss</b>
+    (blue) should trend <b>down</b> as the model fits the training clips. <b>Validation
+    accuracy</b> (green) should trend <b>up</b>. If loss keeps falling but accuracy stops
+    rising, the model is starting to memorize rather than generalize — a sign to stop, or
+    to use more data.</p>
+    <div class="subh">Loss ↓</div>
+    <svg id="loss" viewBox="0 0 320 90" class="hidden"></svg>
+    <p class="muted hidden" id="losscap">Training loss per epoch — lower is better.</p>
+    <div class="subh">Validation accuracy ↑</div>
+    <svg id="acccurve" viewBox="0 0 320 90" class="hidden"></svg>
+    <p class="muted hidden" id="acccap">Validation accuracy per epoch (0–1) — higher is better.</p>
+    <p class="muted" id="curveshint">Train above to see the curves.</p>
+  </div>
+
+  <!-- ============ PART 5 ============ -->
+  <div class="parthead"><span class="n">Part 5</span> · Plot a confusion matrix</div>
+
+  <div class="card">
+    <div class="step">Step 8 · Confusion matrix</div>
+    <p class="blurb">Accuracy is one number; a <b>confusion matrix</b> shows the whole
+    story. Each <b>row is the true movement</b>, each <b>column is what the model
+    predicted</b>. The <b>green diagonal</b> is correct answers; <b>red off-diagonal</b>
+    cells are mistakes — and they tell you <i>which</i> movements get mixed up (hands vs.
+    feet vs. tongue), which raw accuracy can't. A perfect model is all green on the
+    diagonal.</p>
+    <div class="scroll"><table id="confusion" class="hidden"></table></div>
+    <p class="muted hidden" id="confcap">Counts on the held-out 1test session · rows = true, columns = predicted.</p>
+    <p class="muted" id="confhint">Train above to see the confusion matrix.</p>
   </div>
 
 </main>
-<script>window.PAGE = { datasets: ['bcic2a'], training: false };</script>
+<script>window.PAGE = { datasets: ['bcic2a'], training: true };</script>
 <script src="/app.js"></script>
 </body>
 </html>

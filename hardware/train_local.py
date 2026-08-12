@@ -40,6 +40,7 @@ except ImportError:
 from braindecode.util import set_random_seeds
 from skorch.dataset import ValidSplit
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
 
 mne.set_log_level("ERROR")
 MODELS = {"shallow": ShallowFBCSPNet, "deep": Deep4Net, "eegnet": EEGNet}
@@ -159,14 +160,24 @@ def load_bcic2a(subject=3):
     Returns every trial from both of the subject's sessions (the train/test
     split by session happens at training time). Needs `moabb` installed
     (pip install moabb) so braindecode can download and parse the recordings."""
+    windows, ch_names, sfreq = _bcic2a_windows(subject)
+    X, y = _stack_windows(windows)
+    return X, y, list(BCIC2A_CLASSES), sfreq, ch_names
+
+
+BCIC2A_CLASSES = ["left hand", "right hand", "feet", "tongue"]
+
+
+def _bcic2a_windows(subject):
+    """Download + preprocess one BNCI2014_001 subject and return its trial
+    windows (both sessions), the 22 channel names, and the sampling rate."""
     from braindecode.datasets import MOABBDataset
     from braindecode.preprocessing import (
         Preprocessor, preprocess, exponential_moving_standardize,
         create_windows_from_events)
 
-    subject = int(subject)
     factor = 1e6                                     # volts → microvolts
-    dataset = MOABBDataset(dataset_name="BNCI2014_001", subject_ids=[subject])
+    dataset = MOABBDataset(dataset_name="BNCI2014_001", subject_ids=[int(subject)])
     preprocess(dataset, [
         Preprocessor("pick_types", eeg=True, meg=False, stim=False),
         Preprocessor(lambda data: np.multiply(data, factor)),
@@ -178,14 +189,40 @@ def load_bcic2a(subject=3):
     # Channel names come from the preprocessed raw (22 EEG channels) — windowing
     # keeps channels, and this is stable across braindecode versions.
     ch_names = list(dataset.datasets[0].raw.ch_names)
-    trial_start_offset_samples = int(-0.5 * sfreq)   # 0.5 s before the cue
+    offset = int(-0.5 * sfreq)                       # 0.5 s before the cue
     windows = create_windows_from_events(
-        dataset, trial_start_offset_samples=trial_start_offset_samples,
+        dataset, trial_start_offset_samples=offset,
         trial_stop_offset_samples=0, preload=True)
-    X = np.stack([w[0] for w in windows]).astype("float32")
-    y = np.array([int(w[1]) for w in windows], dtype="int64")
-    classes = ["left hand", "right hand", "feet", "tongue"]
-    return X, y, classes, sfreq, ch_names
+    return windows, ch_names, sfreq
+
+
+def _stack_windows(win_ds):
+    """Turn a braindecode windows dataset into (X float32, y int64) arrays."""
+    X = np.stack([w[0] for w in win_ds]).astype("float32")
+    y = np.array([int(w[1]) for w in win_ds], dtype="int64")
+    return X, y
+
+
+def load_bcic2a_split(subject=3):
+    """BCI IV 2a with the benchmark's honest split: train on the first session
+    ('0train'), test on the held-out second session ('1test'), recorded on a
+    different day. Returns (Xtr, ytr, Xte, yte, classes, sfreq, ch_names)."""
+    windows, ch_names, sfreq = _bcic2a_windows(subject)
+    parts = windows.split("session")
+
+    def _session(*needles):                          # find a split by name
+        for want in needles:
+            for k in parts:
+                if want in k.lower():
+                    return parts[k]
+        return None
+
+    keys = list(parts.keys())
+    train = _session("train", "0train") or parts[keys[0]]
+    test = _session("test", "eval", "1test") or parts[keys[-1]]
+    Xtr, ytr = _stack_windows(train)
+    Xte, yte = _stack_windows(test)
+    return Xtr, ytr, Xte, yte, list(BCIC2A_CLASSES), sfreq, ch_names
 
 
 def load_npz(path):
@@ -245,43 +282,69 @@ def _fit_once(Xtr, ytr, Xte, yte, classes, model, epochs, lr, batch, device, see
                         iterator_train__drop_last=False,   # train even on small sets
                         train_split=ValidSplit(0.2), device=device, verbose=1)
     clf.fit(Xtr, ytr)
-    acc = float(clf.score(Xte, yte))
-    train_loss = [float(r["train_loss"]) for r in clf.history if "train_loss" in r]
-    return acc, train_loss
+    y_pred = np.asarray(clf.predict(Xte)).astype("int64")
+    acc = float((y_pred == yte).mean())
+    def _col(key):
+        return [float(r[key]) for r in clf.history if r.get(key) is not None]
+    curves = {"train_loss": _col("train_loss"),   # per-epoch learning curves
+              "valid_loss": _col("valid_loss"),
+              "valid_acc": _col("valid_acc")}
+    return acc, curves, y_pred
 
 
-def train_model(X, y, classes, model="shallow", epochs=25, lr=6.25e-4,
-                batch=16, device="auto", seed=20240205):
-    """Train and evaluate. Returns a JSON-friendly dict.
-
-    Resource-optimized for the Xavier NX's shared CPU/GPU memory: 'auto' runs on
-    the GPU when one is present, and if the GPU runs out of the shared memory it
-    transparently falls back to the CPU for that run instead of crashing. You get
-    GPU speed whenever it fits, with no manual constraint."""
+def _run_split(Xtr, ytr, Xte, yte, classes, model, epochs, lr, batch, device, seed):
+    """Fit on (Xtr, ytr), score on (Xte, yte), with the Xavier's GPU→CPU OOM
+    fallback. Returns a JSON-friendly result dict (accuracy, learning curves, and
+    a confusion matrix). Shared by the random-split train_model and the
+    session-split train_model_presplit."""
     device = resolve_device(device)
-    n_cls, C, T = len(classes), int(X.shape[1]), int(X.shape[2])
-    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25,
-                                          random_state=1, stratify=y)
+    n_cls, C, T = len(classes), int(Xtr.shape[1]), int(Xtr.shape[2])
     note = ""
     try:
-        acc, train_loss = _fit_once(Xtr, ytr, Xte, yte, classes, model,
-                                    epochs, lr, batch, device, seed)
+        acc, curves, y_pred = _fit_once(Xtr, ytr, Xte, yte, classes, model,
+                                        epochs, lr, batch, device, seed)
     except RuntimeError as e:                    # e.g. CUDA out of memory
         if device == "cuda" and "out of memory" in str(e).lower():
             torch.cuda.empty_cache()
             device = "cpu"
             note = "GPU was out of free memory, so this run used the CPU."
-            acc, train_loss = _fit_once(Xtr, ytr, Xte, yte, classes, model,
-                                        epochs, lr, batch, device, seed)
+            acc, curves, y_pred = _fit_once(Xtr, ytr, Xte, yte, classes, model,
+                                            epochs, lr, batch, device, seed)
         else:
             raise
     finally:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()             # release memory for the next run
+    # Confusion matrix on the test set: rows = true class, cols = predicted.
+    cm = confusion_matrix(yte, y_pred, labels=list(range(n_cls))).tolist()
     return {"accuracy": acc, "chance": 1.0 / n_cls, "classes": list(classes),
             "n_train": int(len(Xtr)), "n_test": int(len(Xte)),
             "n_chans": C, "n_times": T, "model": model, "device": device,
-            "train_loss": train_loss, "note": note}
+            "train_loss": curves["train_loss"], "valid_loss": curves["valid_loss"],
+            "valid_acc": curves["valid_acc"], "confusion": cm, "note": note}
+
+
+def train_model(X, y, classes, model="shallow", epochs=25, lr=6.25e-4,
+                batch=16, device="auto", seed=20240205):
+    """Train and evaluate on a random 75/25 stratified split. Returns a
+    JSON-friendly dict.
+
+    Resource-optimized for the Xavier NX's shared CPU/GPU memory: 'auto' runs on
+    the GPU when one is present, and if the GPU runs out of the shared memory it
+    transparently falls back to the CPU for that run instead of crashing."""
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25,
+                                          random_state=1, stratify=y)
+    return _run_split(Xtr, ytr, Xte, yte, classes, model, epochs, lr, batch,
+                      device, seed)
+
+
+def train_model_presplit(Xtr, ytr, Xte, yte, classes, model="shallow", epochs=25,
+                         lr=6.25e-4, batch=16, device="auto", seed=20240205):
+    """Like train_model, but the caller supplies the train/test split. Used for
+    BCI IV 2a's honest CROSS-SESSION evaluation: fit on session '0train', score
+    on the held-out session '1test' — never mixing days."""
+    return _run_split(Xtr, ytr, Xte, yte, classes, model, epochs, lr, batch,
+                      device, seed)
 
 
 def main():
