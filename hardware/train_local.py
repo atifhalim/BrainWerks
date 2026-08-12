@@ -40,6 +40,7 @@ except ImportError:
 from braindecode.util import set_random_seeds
 from skorch.dataset import ValidSplit
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
 
 mne.set_log_level("ERROR")
 MODELS = {"shallow": ShallowFBCSPNet, "deep": Deep4Net, "eegnet": EEGNet}
@@ -281,37 +282,46 @@ def _fit_once(Xtr, ytr, Xte, yte, classes, model, epochs, lr, batch, device, see
                         iterator_train__drop_last=False,   # train even on small sets
                         train_split=ValidSplit(0.2), device=device, verbose=1)
     clf.fit(Xtr, ytr)
-    acc = float(clf.score(Xte, yte))
-    train_loss = [float(r["train_loss"]) for r in clf.history if "train_loss" in r]
-    return acc, train_loss
+    y_pred = np.asarray(clf.predict(Xte)).astype("int64")
+    acc = float((y_pred == yte).mean())
+    def _col(key):
+        return [float(r[key]) for r in clf.history if r.get(key) is not None]
+    curves = {"train_loss": _col("train_loss"),   # per-epoch learning curves
+              "valid_loss": _col("valid_loss"),
+              "valid_acc": _col("valid_acc")}
+    return acc, curves, y_pred
 
 
 def _run_split(Xtr, ytr, Xte, yte, classes, model, epochs, lr, batch, device, seed):
     """Fit on (Xtr, ytr), score on (Xte, yte), with the Xavier's GPU→CPU OOM
-    fallback. Returns a JSON-friendly result dict. Shared by both the random-split
-    train_model and the session-split train_model_presplit."""
+    fallback. Returns a JSON-friendly result dict (accuracy, learning curves, and
+    a confusion matrix). Shared by the random-split train_model and the
+    session-split train_model_presplit."""
     device = resolve_device(device)
     n_cls, C, T = len(classes), int(Xtr.shape[1]), int(Xtr.shape[2])
     note = ""
     try:
-        acc, train_loss = _fit_once(Xtr, ytr, Xte, yte, classes, model,
-                                    epochs, lr, batch, device, seed)
+        acc, curves, y_pred = _fit_once(Xtr, ytr, Xte, yte, classes, model,
+                                        epochs, lr, batch, device, seed)
     except RuntimeError as e:                    # e.g. CUDA out of memory
         if device == "cuda" and "out of memory" in str(e).lower():
             torch.cuda.empty_cache()
             device = "cpu"
             note = "GPU was out of free memory, so this run used the CPU."
-            acc, train_loss = _fit_once(Xtr, ytr, Xte, yte, classes, model,
-                                        epochs, lr, batch, device, seed)
+            acc, curves, y_pred = _fit_once(Xtr, ytr, Xte, yte, classes, model,
+                                            epochs, lr, batch, device, seed)
         else:
             raise
     finally:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()             # release memory for the next run
+    # Confusion matrix on the test set: rows = true class, cols = predicted.
+    cm = confusion_matrix(yte, y_pred, labels=list(range(n_cls))).tolist()
     return {"accuracy": acc, "chance": 1.0 / n_cls, "classes": list(classes),
             "n_train": int(len(Xtr)), "n_test": int(len(Xte)),
             "n_chans": C, "n_times": T, "model": model, "device": device,
-            "train_loss": train_loss, "note": note}
+            "train_loss": curves["train_loss"], "valid_loss": curves["valid_loss"],
+            "valid_acc": curves["valid_acc"], "confusion": cm, "note": note}
 
 
 def train_model(X, y, classes, model="shallow", epochs=25, lr=6.25e-4,

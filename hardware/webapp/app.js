@@ -137,6 +137,8 @@ async function onTrain() {
     if (r.reference_note) meta += '<br>' + r.reference_note;
     $('rmeta').innerHTML = meta;
     drawLoss(r.train_loss);
+    drawAcc(r.valid_acc);                 // training-curve: validation accuracy
+    renderConfusion(r.confusion, r.classes);
     $('result').classList.remove('hidden');
   } catch (e) {
     $('status').innerHTML = '<span class="err">' + e.message + '</span>';
@@ -155,6 +157,47 @@ function drawLoss(loss) {
     `<polyline fill="none" stroke="#6ea8fe" stroke-width="2" points="${pts}"/>`;
   $('loss').classList.remove('hidden');
   $('losscap').classList.remove('hidden');
+  if ($('curveshint')) $('curveshint').classList.add('hidden');
+}
+
+// Validation-accuracy training curve (0..1, higher is better). Optional element.
+function drawAcc(acc) {
+  const svg = $('acccurve');
+  if (!svg) return;
+  if (!acc || acc.length < 2) { svg.classList.add('hidden'); return; }
+  const W = 320, H = 90, pad = 6;
+  const x = i => pad + i * (W - 2 * pad) / (acc.length - 1);
+  const yv = v => H - pad - Math.max(0, Math.min(1, v)) * (H - 2 * pad);   // 0..1
+  const pts = acc.map((v, i) => `${x(i).toFixed(1)},${yv(v).toFixed(1)}`).join(' ');
+  svg.innerHTML =
+    `<polyline fill="none" stroke="#4ade80" stroke-width="2" points="${pts}"/>`;
+  svg.classList.remove('hidden');
+  if ($('acccap')) $('acccap').classList.remove('hidden');
+}
+
+// Confusion matrix: rows = true class, cols = predicted. Diagonal = correct.
+// The cell shade scales with its share of that true-class row. Optional element.
+function renderConfusion(cm, classes) {
+  const box = $('confusion');
+  if (!box) return;
+  if (!cm || !cm.length) { box.classList.add('hidden'); return; }
+  const short = classes.map(c => c.replace(' hand', '').replace('eyes ', ''));
+  let h = '<tr><th class="lh">true ↓ / pred →</th>' +
+    short.map(c => `<th>${c}</th>`).join('') + '</tr>';
+  cm.forEach((row, i) => {
+    const total = row.reduce((a, b) => a + b, 0) || 1;
+    h += `<tr><td class="lh">${short[i]}</td>` + row.map((v, j) => {
+      const frac = v / total;
+      const bg = i === j
+        ? `background:rgba(74,222,128,${(0.15 + 0.55 * frac).toFixed(2)})`   // correct: green
+        : (v ? `background:rgba(255,154,154,${(0.12 + 0.5 * frac).toFixed(2)})` : '');  // wrong: red
+      return `<td style="${bg}">${v}</td>`;
+    }).join('') + '</tr>';
+  });
+  box.innerHTML = h;
+  box.classList.remove('hidden');
+  if ($('confcap')) $('confcap').classList.remove('hidden');
+  if ($('confhint')) $('confhint').classList.add('hidden');
 }
 
 async function post(url, body) {
