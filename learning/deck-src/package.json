@@ -6,7 +6,9 @@
   "scripts": {
     "assets": "node assets.js && node assets2.js",
     "deck": "node build.js",
-    "build": "node assets.js && node assets2.js && node build.js"
+    "build": "node assets.js && node assets2.js && node build.js",
+    "deck2": "node build2.js",
+    "build2": "node assets.js && node assets2.js && node build2.js"
   },
   "dependencies": {
     "pptxgenjs": "^4.0.1",
